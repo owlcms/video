@@ -392,6 +392,14 @@ func DisconnectMQTT() {
 	}
 }
 
+// Reconnect re-establishes the MQTT session so that a new server address or
+// platform takes effect without restarting. It blocks and must not be called
+// from the UI thread.
+func Reconnect(cfg *replays.Config) {
+	DisconnectMQTT()
+	Monitor(cfg)
+}
+
 // GetPlatformsForSelection returns platforms for user selection, with appropriate error handling
 func GetPlatformsForSelection() ([]string, error) {
 	if mqttClient == nil || !mqttClient.IsConnected() {

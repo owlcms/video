@@ -166,7 +166,69 @@ func assembleSourceInventory(usbSpecs, rtspSpecs []sourceSpec, encoder *recordin
 func buildUSBSourcesWithProgress(startPort int, usedPorts map[int]struct{}, usedShortIDs map[string]struct{}, progress func(string)) ([]sourceSpec, bool) {
 	cameras := detectUSBCamerasWithConfigAndProgress(ffmpegConfig, progress, nil)
 	sources := buildUSBSourcesFromDetected(cameras, startPort, usedPorts, usedShortIDs, progress)
-	return sources, disableAbsentUSBAssignments(sources)
+	changed := disableAbsentUSBAssignments(sources)
+	if syncDetectedUSBAssignments(sources) {
+		changed = true
+	}
+	return sources, changed
+}
+
+// syncDetectedUSBAssignments records every detected USB source in the camera
+// configuration so that the persisted file lists what is actually available.
+// Other modules (and the /api/cameras/config endpoint) read the saved
+// configuration, so detected sources must not stay in memory only.
+func syncDetectedUSBAssignments(sources []sourceSpec) bool {
+	if camerasConfig == nil {
+		return false
+	}
+
+	assignmentsByAttachment, assignmentsByMatchKey := deviceAssignmentMaps()
+	changed := false
+	missing := make([]sourceSpec, 0, len(sources))
+
+	for _, source := range sources {
+		if !source.Detected {
+			continue
+		}
+		assignment := matchingDeviceAssignment(source.Camera, assignmentsByAttachment, assignmentsByMatchKey)
+		if assignment == nil {
+			missing = append(missing, source)
+			continue
+		}
+		if strings.TrimSpace(assignment.Name) == "" && strings.TrimSpace(source.Name) != "" {
+			assignment.Name = source.Name
+			changed = true
+		}
+		if strings.TrimSpace(assignment.ShortID) == "" && strings.TrimSpace(source.ShortID) != "" {
+			assignment.ShortID = source.ShortID
+			changed = true
+		}
+		if assignment.OutputPort <= 0 && source.OutputPort > 0 {
+			assignment.OutputPort = source.OutputPort
+			changed = true
+		}
+	}
+
+	// Appending reallocates the slice, so add new assignments only after the
+	// pointers taken above are no longer used.
+	for _, source := range missing {
+		camerasConfig.DeviceAssignments = append(camerasConfig.DeviceAssignments, camerascfg.DeviceAssignment{
+			AttachmentPath:   source.AttachmentPath,
+			MatchKey:         source.Key,
+			Name:             source.Name,
+			ShortID:          source.ShortID,
+			OutputPort:       source.OutputPort,
+			ProbePixelFormat: source.Camera.PixFmt,
+			ProbeSize:        source.Camera.Size,
+			ProbeFPS:         source.Camera.Fps,
+			ProbeFormats:     append([]string(nil), source.Camera.SupportedFormats...),
+		})
+		logging.InfoLogger.Printf("Recorded detected USB source %q (shortID=%s, port=%d, attachmentPath=%s)",
+			source.Name, source.ShortID, source.OutputPort, source.AttachmentPath)
+		changed = true
+	}
+
+	return changed
 }
 
 func buildUSBSourcesFromDetected(cameras []recording.DetectedCamera, startPort int, usedPorts map[int]struct{}, usedShortIDs map[string]struct{}, progress func(string)) []sourceSpec {

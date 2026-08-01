@@ -110,6 +110,14 @@ func (b *menuButton) Tapped(*fyne.PointEvent) {
 	showCompactMenu(b)
 }
 
+// clearHighlight also resets the hover state because no MouseOut is delivered
+// while the menu overlay has the pointer.
+func (b *menuButton) clearHighlight() {
+	b.hovered = false
+	b.menuOpen = false
+	b.updateBackground()
+}
+
 func (b *menuButton) menuLabel() *canvas.Text {
 	label := canvas.NewText(b.label, b.Theme().Color(theme.ColorNameForeground, fyne.CurrentApp().Settings().ThemeVariant()))
 	label.Alignment = fyne.TextAlignCenter
@@ -133,42 +141,24 @@ func (b *menuButton) updateBackground() {
 func showCompactMenu(button *menuButton) {
 	app := fyne.CurrentApp()
 	if app == nil || app.Driver() == nil {
-		button.menuOpen = false
-		button.updateBackground()
+		button.clearHighlight()
 		return
 	}
 
 	driver := app.Driver()
 	menuCanvas := driver.CanvasForObject(button)
 	if menuCanvas == nil {
-		button.menuOpen = false
-		button.updateBackground()
+		button.clearHighlight()
 		return
 	}
 
-	compactTheme := compactMenuTheme{Theme: button.Theme()}
-	variant := fyne.CurrentApp().Settings().ThemeVariant()
-	menuBackground := compactTheme.Color(theme.ColorNameMenuBackground, variant)
-	menu := widget.NewMenu(fyne.NewMenu("", button.menuItems...))
-	topInset := canvas.NewRectangle(menuBackground)
-	topInset.SetMinSize(fyne.NewSize(1, 3))
-	leftInset := canvas.NewRectangle(menuBackground)
-	leftInset.SetMinSize(fyne.NewSize(3, 1))
-	rightInset := canvas.NewRectangle(menuBackground)
-	rightInset.SetMinSize(fyne.NewSize(3, 1))
-	content := container.NewBorder(
-		topInset,
-		nil,
-		leftInset,
-		rightInset,
-		container.NewThemeOverride(menu, compactTheme),
-	)
-	popup := widget.NewPopUp(container.NewThemeOverride(content, compactTheme), menuCanvas)
-	container.NewThemeOverride(popup, compactTheme)
-	menu.OnDismiss = func() {
+	// PopUpMenu reports outside taps through OnDismiss.
+	popup := widget.NewPopUpMenu(fyne.NewMenu("", button.menuItems...), menuCanvas)
+	container.NewThemeOverride(popup, compactMenuTheme{Theme: button.Theme()})
+	popup.Resize(popup.MinSize())
+	popup.OnDismiss = func() {
 		popup.Hide()
-		button.menuOpen = false
-		button.updateBackground()
+		button.clearHighlight()
 	}
 
 	position := driver.AbsolutePositionForObject(button)

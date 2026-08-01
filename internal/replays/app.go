@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -97,16 +96,12 @@ func showOwlCMSServerAddress(cfg *replayscfg.Config, window fyne.Window) {
 			cfg.OwlCMS = newAddress
 			configFilePath := moduleConfigPath
 			if err := replayscfg.UpdateConfigFile(configFilePath, newAddress); err != nil {
-				fmt.Printf("Error updating config file: %v\n", err)
+				logging.ErrorLogger.Printf("Error updating config file: %v", err)
 				dialog.ShowError(err, window)
 				return
 			}
-			successDialog := dialog.NewInformation("Success", "OwlCMS server address updated. The application will now exit. Please restart it.", window)
-			successDialog.SetOnClosed(func() {
-				window.Close()
-				os.Exit(0)
-			})
-			successDialog.Show()
+			go monitor.Reconnect(cfg)
+			dialog.ShowInformation("Success", "owlcms server address updated.", window)
 		}
 	}
 
@@ -267,12 +262,10 @@ func showCameraSelectionDialog(cfg *replayscfg.Config, preview *localCamerasImpo
 		}
 		cfg.Cameras = cfg.Multicast.BuildCameraConfigs()
 		config.SetCameraConfigs(cfg.Cameras)
-		successDialog := dialog.NewInformation("Success", "Selected cameras saved. The application will now exit. Please restart it.", window)
-		successDialog.SetOnClosed(func() {
-			window.Close()
-			os.Exit(0)
-		})
-		successDialog.Show()
+		if err := recording.EnsureCompatibleFFmpegForRecording(cfg.Cameras); err != nil {
+			logging.WarningLogger.Printf("Warning: failed to switch to compatible ffmpeg for recording: %v", err)
+		}
+		dialog.ShowInformation("Success", "Selected cameras saved.", window)
 	}, window).Show()
 }
 
@@ -330,12 +323,8 @@ func showPlatformSelection(cfg *replayscfg.Config, window fyne.Window) {
 					dialog.ShowError(err, window)
 					return
 				}
-				successDialog := dialog.NewInformation("Success", "Platform updated. The application will now exit. Please restart it.", window)
-				successDialog.SetOnClosed(func() {
-					window.Close()
-					os.Exit(0)
-				})
-				successDialog.Show()
+				go monitor.Reconnect(cfg)
+				dialog.ShowInformation("Success", "Platform updated.", window)
 			}
 		}, window)
 	dialog.Resize(fyne.NewSize(300, 0))
