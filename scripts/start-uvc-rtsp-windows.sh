@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+# Debug helper: simulate an external RTSP camera from a local UVC device.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MEDIAMTX_EXE="$SCRIPT_DIR/mediamtx.exe"
 STREAM_NAME="${STREAM_NAME:-uvc}"

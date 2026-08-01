@@ -316,6 +316,19 @@ jobs:
         name: mac_arm64_artifacts
         path: ./dist
 
+    - name: Verify Video release assets
+      run: |
+        expected_assets=(
+          video_windows.exe
+          video_linux_amd64
+          video_linux_arm64
+          video_darwin_amd64
+          video_darwin_arm64
+        )
+        for asset in "${expected_assets[@]}"; do
+          test -f "./dist/${asset}"
+        done
+
     - name: List artifacts
       run: ls -la ./dist
 

@@ -8,7 +8,7 @@ PLUGIN_RELEASE_API="https://api.github.com/repos/dimtpap/obs-pipewire-audio-capt
 
 ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
 
-echo "=== User Media Setup (FFplay + OBS PipeWire Plugin) ==="
+echo "=== OWLCMS Video Media Setup (FFplay + OBS PipeWire Plugin) ==="
 echo "Detected architecture: $ARCH"
 
 if [ ! -x "$FFMPEG_SCRIPT" ]; then

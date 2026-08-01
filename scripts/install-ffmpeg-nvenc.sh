@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install Jellyfin's ffmpeg build with NVENC support
+# Install FFmpeg for OWLCMS Video with optional NVENC support.
 # Keep distro ffmpeg installed first so ffplay is always available
 #
 # Run as: sudo ./install-ffmpeg-nvenc.sh

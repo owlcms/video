@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FFMPEG_SCRIPT="$SCRIPT_DIR/install-ffmpeg-nvenc.sh"
 
-echo "=== User FFplay Setup (FFmpeg + FFplay) ==="
+echo "=== OWLCMS Video Replay Viewer Setup (FFmpeg + FFplay) ==="
 
 if [ ! -x "$FFMPEG_SCRIPT" ]; then
     chmod +x "$FFMPEG_SCRIPT"

@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-GO_VERSION="${GO_VERSION:-1.26.0}"
+GO_VERSION="${GO_VERSION:-1.25.5}"
 
-echo "=== Developer Tooling Setup ==="
+echo "=== OWLCMS Video Developer Tooling Setup ==="
 
 echo
 echo "Step 1/5: Install build and graphics dependencies..."
@@ -73,4 +73,4 @@ gh --version | head -1
 code --version | head -1
 
 echo
-echo "Developer tooling setup complete. Open a new shell before building."
+echo "Developer tooling setup complete. Open a new shell, then build OWLCMS Video with: go build -o video ."

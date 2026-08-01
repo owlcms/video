@@ -4,7 +4,7 @@ set -euo pipefail
 
 PLUGIN_RELEASE_API="https://api.github.com/repos/dimtpap/obs-pipewire-audio-capture/releases/latest"
 
-echo "=== User OBS Setup ==="
+echo "=== OWLCMS Video OBS Setup ==="
 
 echo
 echo "Step 1/3: Install OBS and audio tools..."

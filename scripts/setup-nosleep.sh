@@ -14,7 +14,7 @@ fi
 USER_NAME="$SUDO_USER"
 LOGIND_CONF="/etc/systemd/logind.conf"
 
-echo "Applying no-sleep, no-blank, ignore-lid settings for user: $USER_NAME"
+echo "Applying OWLCMS Video no-sleep, no-blank, ignore-lid settings for user: $USER_NAME"
 
 #############################################
 # 1. Disable all suspend/hibernate actions

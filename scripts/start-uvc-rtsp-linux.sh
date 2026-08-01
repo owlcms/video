@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+# Debug helper: simulate an external RTSP camera from a local UVC device.
 STREAM_NAME="${STREAM_NAME:-uvc}"
 RTSP_URL="${RTSP_URL:-rtsp://127.0.0.1:8554/${STREAM_NAME}}"
 CAMERA_DEVICE="${CAMERA_DEVICE:-/dev/video0}"
