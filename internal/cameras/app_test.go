@@ -425,6 +425,28 @@ func TestPreviewWindowSize(t *testing.T) {
 	}
 }
 
+func TestShouldIgnoreFFplayStderrLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{name: "mpegts packet corrupt", message: "[mpegts @ 0xa2af05400] Packet corrupt (stream = 0, dts = 31627158).", want: true},
+		{name: "packet corrupt with progress", message: "[mpegts @ 0xa2af05400] Packet corrupt (stream = 0, dts = 3611541). 39.92 M-V: 0.000", want: true},
+		{name: "case insensitive", message: "PACKET CORRUPT", want: true},
+		{name: "real error", message: "udp://127.0.0.1:9001: Input/output error", want: false},
+		{name: "input header", message: "Input #0, mpegts, from 'udp://127.0.0.1:9001':", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldIgnoreFFplayStderrLine(tc.message); got != tc.want {
+				t.Fatalf("shouldIgnoreFFplayStderrLine(%q) = %t, want %t", tc.message, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreviewArgsForSize(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1144,6 +1166,54 @@ func TestBuildStreamCommandSpecUsesAVFoundationInput(t *testing.T) {
 	}
 }
 
+// AVFoundation reassigns indices whenever a device is opened or released, so two
+// cameras can exchange indices between detection and capture. Addressing the
+// device by its stable name keeps each stream on the intended camera.
+func TestBuildStreamCommandSpecOpensAVFoundationByStableName(t *testing.T) {
+	previousCamerasConfig := camerasConfig
+	previousFFmpegConfig := ffmpegConfig
+	previousFFmpegPath := config.GetFFmpegPath()
+	defer func() {
+		camerasConfig = previousCamerasConfig
+		ffmpegConfig = previousFFmpegConfig
+		config.SetFFmpegPath(previousFFmpegPath)
+	}()
+
+	camerasConfig = &camerascfg.Config{
+		Unicast: camerascfg.UnicastConfig{Enabled: true},
+	}
+	ffmpegConfig = &ffmpegcfg.Config{
+		Software: ffmpegcfg.SoftwareEncoder{OutputParameters: "-c:v libx264"},
+		Output:   ffmpegcfg.OutputConfig{ExtraFlags: "-f mpegts"},
+	}
+	config.SetFFmpegPath("ffmpeg")
+
+	stream := &cameraStream{
+		camera: recording.DetectedCamera{
+			Name:       "Platform Left",
+			DeviceName: "MacBook Air Camera",
+			MatchKey:   "avfoundation:macbook air camera",
+			Format:     "avfoundation",
+			PixFmt:     "uyvy422",
+			Device:     "1",
+			Size:       "1920x1080",
+			Fps:        30,
+		},
+		port: 9005,
+	}
+	spec, err := buildStreamCommandSpec(stream, streamOutputLive)
+	if err != nil {
+		t.Fatalf("buildStreamCommandSpec() error = %v", err)
+	}
+	joined := strings.Join(spec.args, " ")
+	if !strings.Contains(joined, "-i MacBook Air Camera:none") {
+		t.Fatalf("args = %q, want the stable device name as input", joined)
+	}
+	if strings.Contains(joined, "-i 1:none") {
+		t.Fatalf("args = %q, do not want the volatile numeric index as input", joined)
+	}
+}
+
 func TestStreamNeedsStartupProbeIncludesCopyStreams(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1315,16 +1385,16 @@ func TestRunStartupProbeRetriesTransientGrabFailure(t *testing.T) {
 // root cause on actual hardware: AVFoundation numeric device indices are not
 // stable, so a stored index can point at a different physical camera (for
 // example the built-in FaceTime camera, which maxes out at 30 fps) and reject
-// the configured 60 fps. The start path re-resolves the index by device name
-// before opening, so it targets the intended UVC camera.
+// the configured 60 fps. The start path opens by the stable device name, so it
+// targets the intended UVC camera even if the stored index is stale.
 //
 // This test is skipped entirely when no AVFoundation UVC camera capable of
 // 60 fps is present, so it is a no-op on machines/CI without such hardware. It
 // asserts the deterministic resolution logic and does not compete for an
 // exclusive device open (which would contend with any running stream).
-func TestUVCDeviceStartupProbeUsesCurrentAVFoundationIndex(t *testing.T) {
+func TestUVCDeviceStartupProbeUsesStableAVFoundationName(t *testing.T) {
 	if runtime.GOOS != "darwin" {
-		t.Skip("AVFoundation index-resolution test only applies to macOS")
+		t.Skip("AVFoundation stable-name test only applies to macOS")
 	}
 	if testing.Short() {
 		t.Skip("skipping real-device UVC test in -short mode")
@@ -1356,28 +1426,24 @@ func TestUVCDeviceStartupProbeUsesCurrentAVFoundationIndex(t *testing.T) {
 		t.Skip("no AVFoundation UVC camera advertising >= 60 fps detected; skipping")
 	}
 
-	current, ok := recording.ResolveAVFoundationDeviceIndex(cam.Name)
+	deviceName, ok := recording.AVFoundationDeviceName(*cam)
 	if !ok {
-		t.Skipf("camera %q not present in live AVFoundation device list; skipping", cam.Name)
+		t.Skipf("camera %q has no AVFoundation match key (%q); skipping", cam.Name, cam.MatchKey)
 	}
 
-	// Simulate a stale/wrong stored index and verify the start path re-resolves
-	// it to the camera's current live index by name.
-	staleIndex := "99"
-	if staleIndex == current {
-		staleIndex = "98"
-	}
+	// Simulate a stale/wrong stored index plus a user-assigned display name that
+	// matches no device, and verify capture still uses the OS-reported name.
 	stream := &cameraStream{
 		camera:  *cam,
 		shortID: "UVC",
 		port:    9002,
 	}
-	stream.camera.Device = staleIndex
+	stream.camera.Device = "99"
+	stream.camera.Name = "Renamed By User"
 
 	resolveAVFoundationStreamIndex(stream)
 
-	if stream.camera.Device != current {
-		t.Fatalf("resolved index = %q, want current live index %q for %q", stream.camera.Device, current, cam.Name)
+	if got, want := avfoundationInput(stream.camera), deviceName+":none"; got != want {
+		t.Fatalf("avfoundationInput() = %q, want stable device input %q", got, want)
 	}
-	t.Logf("re-resolved %q from stale index %q to current index %q", cam.Name, staleIndex, current)
 }

@@ -24,6 +24,7 @@ import (
 // DetectedCamera holds information about a detected camera device
 type DetectedCamera struct {
 	Name             string
+	DeviceName       string       // OS-reported device name, preserved when Name is replaced by a user-assigned label
 	Device           string       // device path (Linux), device name (Windows), or video index (macOS)
 	Format           string       // v4l2, dshow, avfoundation, or rtsp
 	TransportType    string       // native transport identifier when the platform exposes one (for example, "usb ")
@@ -832,13 +833,55 @@ func isDeskViewCamera(name string) bool {
 	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), "desk view camera")
 }
 
+const avfoundationMatchKeyPrefix = "avfoundation:"
+
+// AVFoundationDeviceName returns the OS-reported device name for a detected
+// AVFoundation camera. DetectedCamera.Name holds the user-assigned display name
+// once a device assignment is applied, so the OS name is taken from DeviceName,
+// falling back to the stable match key (which is lower-cased, and therefore only
+// suitable for case-insensitive lookups such as ResolveAVFoundationDeviceIndex).
+func AVFoundationDeviceName(cam DetectedCamera) (string, bool) {
+	if name := strings.TrimSpace(cam.DeviceName); name != "" {
+		return name, true
+	}
+	key := strings.TrimSpace(cam.MatchKey)
+	if !strings.HasPrefix(key, avfoundationMatchKeyPrefix) {
+		return "", false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(key, avfoundationMatchKeyPrefix))
+	if name == "" || name == "unknown" {
+		return "", false
+	}
+	return name, true
+}
+
+// AVFoundationInputName returns the value to pass to ffmpeg's avfoundation
+// demuxer so it opens the camera by name instead of by numeric index.
+//
+// AVFoundation indices are reassigned whenever a device is opened or released,
+// so two cameras can exchange indices between detection and capture — which
+// silently streams the wrong camera. ffmpeg resolves a device name against the
+// live device list as it opens the device, so name-based input is race-free.
+//
+// ffmpeg matches the name case-sensitively and splits the input on ":" to
+// separate the video and audio devices, so only an exact-case name without a
+// colon can be used; otherwise the caller must fall back to the index.
+func AVFoundationInputName(cam DetectedCamera) (string, bool) {
+	name := strings.TrimSpace(cam.DeviceName)
+	if name == "" || strings.Contains(name, ":") {
+		return "", false
+	}
+	return name, true
+}
+
 // ResolveAVFoundationDeviceIndex returns the current AVFoundation device index
 // for the named device. AVFoundation numeric indices are NOT stable: they
 // change when cameras are connected/disconnected or when another process opens
 // a device, so an index captured at detection time can later point at a
-// different physical camera. Re-resolving by name immediately before opening
-// the device avoids streaming from the wrong camera (which manifests as a false
-// "framerate not supported" failure when the wrong camera has a lower max fps).
+// different physical camera.
+//
+// The name must be the OS-reported device name, not a user-assigned display
+// name; use AVFoundationDeviceName to recover it from a DetectedCamera.
 func ResolveAVFoundationDeviceIndex(name string) (string, bool) {
 	trimmed := strings.ToLower(strings.TrimSpace(name))
 	if trimmed == "" {
@@ -863,7 +906,12 @@ func ResolveAVFoundationDeviceIndex(name string) (string, bool) {
 }
 
 func probeAVFoundationDevice(ffmpegPath string, device avfoundationDevice, cfg *ffmpeg.Config) *DetectedCamera {
+	// Probing opens and closes devices, which reassigns indices for the
+	// devices probed next, so address the device by name whenever possible.
 	input := device.index + ":none"
+	if !strings.Contains(device.name, ":") {
+		input = device.name + ":none"
+	}
 	modeProbe := CreateHiddenCmd(ffmpegPath, "-hide_banner", "-f", "avfoundation", "-framerate", "1000", "-i", input)
 	var modeOutput bytes.Buffer
 	modeProbe.Stdout = &modeOutput
@@ -900,6 +948,7 @@ func probeAVFoundationDevice(ffmpegPath string, device avfoundationDevice, cfg *
 	matchKey, attachmentPath, identity := resolveAVFoundationCameraIdentity(device.name)
 	return &DetectedCamera{
 		Name:             device.name,
+		DeviceName:       device.name,
 		Device:           device.index,
 		Format:           "avfoundation",
 		PixFmt:           pixFmt,
@@ -1406,7 +1455,7 @@ func resolveAVFoundationCameraIdentity(name string) (string, string, string) {
 	if trimmedName == "" {
 		trimmedName = "unknown"
 	}
-	return "avfoundation:" + strings.ToLower(trimmedName), "", trimmedName
+	return avfoundationMatchKeyPrefix + strings.ToLower(trimmedName), "", trimmedName
 }
 
 func resolveStableCameraIdentity(name, device, location string) (string, string, string) {

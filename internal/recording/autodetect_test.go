@@ -138,6 +138,39 @@ func TestParseAVFoundationVideoDevices(t *testing.T) {
 	}
 }
 
+func TestAVFoundationNameHelpersIgnoreUserAssignedName(t *testing.T) {
+	cam := DetectedCamera{
+		Name:       "Platform Left",
+		DeviceName: "MacBook Air Camera",
+		MatchKey:   "avfoundation:macbook air camera",
+		Format:     "avfoundation",
+	}
+
+	if got, ok := AVFoundationDeviceName(cam); !ok || got != "MacBook Air Camera" {
+		t.Fatalf("AVFoundationDeviceName() = %q, %t; want %q, true", got, ok, "MacBook Air Camera")
+	}
+	if got, ok := AVFoundationInputName(cam); !ok || got != "MacBook Air Camera" {
+		t.Fatalf("AVFoundationInputName() = %q, %t; want %q, true", got, ok, "MacBook Air Camera")
+	}
+
+	// Configs written before DeviceName existed still resolve an index lookup
+	// name from the match key, but cannot be opened by name because the key is
+	// lower-cased and ffmpeg matches device names case-sensitively.
+	legacy := DetectedCamera{Name: "Platform Left", MatchKey: "avfoundation:macbook air camera", Format: "avfoundation"}
+	if got, ok := AVFoundationDeviceName(legacy); !ok || got != "macbook air camera" {
+		t.Fatalf("AVFoundationDeviceName(legacy) = %q, %t; want %q, true", got, ok, "macbook air camera")
+	}
+	if got, ok := AVFoundationInputName(legacy); ok {
+		t.Fatalf("AVFoundationInputName(legacy) = %q, true; want fallback to index", got)
+	}
+
+	// A colon would be parsed as the video/audio device separator.
+	colon := DetectedCamera{DeviceName: "Weird:Cam", Format: "avfoundation"}
+	if got, ok := AVFoundationInputName(colon); ok {
+		t.Fatalf("AVFoundationInputName(colon) = %q, true; want fallback to index", got)
+	}
+}
+
 func TestParseAVFoundationModesAndPixelFormat(t *testing.T) {
 	modeOutput := `[avfoundation @ 0x1] Supported modes:
 [avfoundation @ 0x1]   640x480@[15.000000 30.000000]fps

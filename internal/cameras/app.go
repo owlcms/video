@@ -935,7 +935,7 @@ func buildStreamCommandSpec(stream *cameraStream, mode streamOutputMode) (stream
 		args = append(args, "-pixel_format", cam.PixFmt)
 		args = append(args, "-video_size", cam.Size)
 		args = append(args, "-framerate", fmt.Sprintf("%d", cam.Fps))
-		args = append(args, "-i", cam.Device+":none")
+		args = append(args, "-i", avfoundationInput(cam))
 
 	case "rtsp":
 		transport := strings.ToLower(strings.TrimSpace(stream.transport))
@@ -1029,6 +1029,15 @@ func buildStreamCommandSpec(stream *cameraStream, mode streamOutputMode) (stream
 		args:       args,
 		udpDest:    udpDest,
 	}, nil
+}
+
+// avfoundationInput returns the ffmpeg "-i" value for an AVFoundation camera,
+// preferring the stable device name over the volatile numeric index.
+func avfoundationInput(cam recording.DetectedCamera) string {
+	if name, ok := recording.AVFoundationInputName(cam); ok {
+		return name + ":none"
+	}
+	return cam.Device + ":none"
 }
 
 func formatCommandLine(path string, args []string) string {
@@ -1140,27 +1149,32 @@ func runStartupProbeCommand(ffmpegPath string, args []string, logLevel string, t
 
 var runStartupProbeCommandFunc = runStartupProbeCommand
 
-// resolveAVFoundationStreamIndex re-resolves the AVFoundation device index from
-// the camera name right before opening it. AVFoundation numeric indices are not
-// stable, so a stored index can point at a different physical camera (for
-// example the built-in FaceTime camera instead of an external UVC camera),
-// which then rejects the configured framerate. Matching by name yields the
-// current index for the intended camera.
+// resolveAVFoundationStreamIndex refreshes the stored AVFoundation index from
+// the camera's stable device name. It only matters when avfoundationInput falls
+// back to index-based input, since indices are reassigned whenever a device is
+// opened or released and a stored one can point at a different camera.
+//
+// The lookup never uses stream.camera.Name: that field holds the user-assigned
+// display name, which either matches no device or matches a different one.
 func resolveAVFoundationStreamIndex(stream *cameraStream) {
 	if stream == nil || stream.camera.Format != "avfoundation" {
 		return
 	}
-	name := strings.TrimSpace(stream.camera.Name)
-	if name == "" {
+	if _, ok := recording.AVFoundationInputName(stream.camera); ok {
 		return
 	}
-	current, ok := recording.ResolveAVFoundationDeviceIndex(name)
+	deviceName, ok := recording.AVFoundationDeviceName(stream.camera)
 	if !ok {
-		logging.WarningLogger.Printf("AVFoundation device %q not found in current device list; using stored index %q", name, stream.camera.Device)
+		logging.WarningLogger.Printf("No stable AVFoundation identity for %q (matchKey=%q); using stored index %q", stream.camera.Name, stream.camera.MatchKey, stream.camera.Device)
+		return
+	}
+	current, ok := recording.ResolveAVFoundationDeviceIndex(deviceName)
+	if !ok {
+		logging.WarningLogger.Printf("AVFoundation device %q not found in current device list; using stored index %q", deviceName, stream.camera.Device)
 		return
 	}
 	if current != stream.camera.Device {
-		logging.WarningLogger.Printf("AVFoundation index for %q changed from %q to %q; using current index", name, stream.camera.Device, current)
+		logging.WarningLogger.Printf("AVFoundation index for %q changed from %q to %q; using current index", deviceName, stream.camera.Device, current)
 		stream.camera.Device = current
 	}
 }
@@ -2264,16 +2278,23 @@ func logPreviewErrors(stream *cameraStream, stderr io.ReadCloser, previewPID int
 	for scanner.Scan() {
 		message := strings.TrimSpace(scanner.Text())
 		if message != "" {
-			logging.WarningLogger.Printf("ffplay stderr [%s]: %s", stream.camera.Name, message)
 			if !previewWindowReady && strings.HasPrefix(message, "Input #") {
 				previewWindowReady = true
 				activatePreviewWindow(previewPID)
 			}
+			if shouldIgnoreFFplayStderrLine(message) {
+				continue
+			}
+			logging.WarningLogger.Printf("ffplay stderr [%s]: %s", stream.camera.Name, message)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		logging.WarningLogger.Printf("ffplay stderr read failed for %s: %v", stream.camera.Name, err)
 	}
+}
+
+func shouldIgnoreFFplayStderrLine(message string) bool {
+	return strings.Contains(strings.ToLower(message), "packet corrupt")
 }
 
 func sanitizeFilePart(value string) string {
