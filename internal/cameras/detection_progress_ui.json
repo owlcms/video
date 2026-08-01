@@ -1,0 +1,17 @@
+{
+	"initialStage": "Preparing scan...",
+	"closeButtonLabel": "Close",
+	"currentStageLabel": "Current stage:",
+	"currentActivityLabel": "Current activity:",
+	"sourceStatusLabel": "Source status:",
+	"failureStatusLabel": "Failures:",
+	"detectingSourcesTitle": "Detecting Sources",
+	"rescanningSourcesTitle": "Rescanning Sources",
+	"detectingSourcesStatus": "Detecting sources...",
+	"rescanButtonLabel": "Rescan Sources",
+	"rescanningSourcesStatus": "Rescanning sources...",
+	"rescanFailed": "Rescan failed: {detail}",
+	"rescanCompletedWithErrors": "Rescan completed with errors. Review the dialog, then close it.",
+	"rescanCompleted": "Sources rescanned.",
+	"detectionCompletedWithErrors": "Detection completed with errors. Review the dialog, then close it."
+}

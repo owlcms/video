@@ -1,0 +1,7 @@
+[Details]
+  Icon = "Icon.png"
+  Name = "video"
+  ID = "app.owlcms.video"
+  Version = "_TAG_"
+  Build = _BUILD_
+

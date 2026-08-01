@@ -1,0 +1,66 @@
+# HTTP server port
+port = 8091
+
+# address of owlcms.  a scan of the local network will be done if undefined or unreachable.
+owlcms = ""
+
+# Platform identifier if more than one platform detected
+platform = "A"
+
+# Remote Video instance used as the Cameras inventory when Cameras is disabled locally.
+camerasServer = ""
+
+# Directory to store video files (can be an absolute path to store on a different drive)
+videoDir = 'videos'
+
+# FFmpeg logging - set to true to create timestamped log files for ffmpeg output
+logFfmpeg = false
+
+
+# =======================================================
+# MPEG-TS Camera Stream Configuration
+# =======================================================
+# When enabled, replays reads H.264 streams from UDP
+# (sent by the cameras program) instead of locally-attached cameras.
+#
+# Use a multicast address (e.g. 239.255.0.1) for multicast mode,
+# or 0.0.0.0 for unicast mode (passive UDP listener).
+# Set a port for each camera (0 = unused).
+
+[mpeg-ts]
+    enabled = true
+    ip = "0.0.0.0"
+    camera1Port = 9001
+    camera2Port = 0
+    camera3Port = 0
+    camera4Port = 0
+
+# Camera source loading in replays:
+# 1) [mpeg-ts] section above (when enabled = true)
+# 2) when mpeg-ts is disabled, auto.toml and config.toml camera sections are merged
+#    - auto.toml [cameraN] sections load first
+#    - config.toml [windows*]/[linux*] sections append additional sources
+#    - matching manual sources override the same source from auto.toml
+# If no source is configured by any of the above, replays starts with no camera sources.
+
+
+# Recommended workflow:
+# - leave auto.toml as the generated baseline
+# - keep config.toml camera sections only for manual additions or explicit overrides
+# - if you want to take things over manually, copy the required camera definitions from auto.toml into
+#   config.toml [windows*]/[linux*] sections, then remove auto.toml.
+#
+# Example manual RTSP source for standalone Replays:
+# - disable [mpeg-ts] above
+# - use [windows1] on Windows or rename the section to [linux1] on Linux
+#
+# [windows1]
+#     enabled = true
+#     camera = "rtsp://192.168.1.93:8554/uvc"
+#     format = "rtsp"
+#     inputParameters = "-rtsp_transport tcp"
+#     outputParameters = "-c:v copy -an"
+#     recode = false
+#
+# Note: the merge/precedence rules above apply only to camera source sections.
+# Non-camera settings in this file (port, videoDir, owlcms, etc.) are read only from config.toml.

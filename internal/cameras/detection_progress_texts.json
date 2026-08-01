@@ -1,0 +1,111 @@
+{
+	"localSrc": {
+		"stage": "Scanning sources",
+		"detail": "Checking source: {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "... {payload}"
+	},
+	"encoder": {
+		"stage": "Scanning sources",
+		"detail": "Checking encoder: {payload}"
+	},
+	"encNoCfg": {
+		"stage": "Scanning sources",
+		"detail": "{detail}: {name}",
+		"statusKey": "encoderConfig:{name}",
+		"statusMessage": "- {name}: {detail}"
+	},
+	"listing": {
+		"stage": "Scanning sources",
+		"detail": "Listing {payload}..."
+	},
+	"hwMsg": {
+		"stage": "Scanning sources",
+		"detail": "Checking video hardware..."
+	},
+	"rtspSrc": {
+		"stage": "Scanning sources",
+		"detail": "Checking source: {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "... {payload}"
+	},
+	"detected": {
+		"stage": "Scanning sources",
+		"detail": "Detected source: {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "... {payload}"
+	},
+	"skipped": {
+		"stage": "Scanning sources",
+		"detail": "Skipped source: {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "- {payload}"
+	},
+	"chkRTSP": {
+		"stage": "Scanning sources",
+		"detail": "Checking RTSP sources..."
+	},
+	"chkLocal": {
+		"stage": "Scanning sources",
+		"detail": "Checking local sources..."
+	},
+	"chkEnc": {
+		"stage": "Scanning sources",
+		"detail": "Checking video hardware..."
+	},
+	"inventory": {
+		"stage": "Scanning sources",
+		"detail": "Source scan complete."
+	},
+	"preparing": {
+		"stage": "Scanning sources",
+		"detail": "Preparing source detection..."
+	},
+	"error": {
+		"stage": "Scanning sources",
+		"detail": "{payload}",
+		"statusKey": "error:{payload}",
+		"statusMessage": "X {payload}",
+		"hasError": true
+	},
+	"streamsAll": {
+		"stage": "Verifying stream settings",
+		"detail": "Starting {payload} stream(s)..."
+	},
+	"streamPrep": {
+		"stage": "Verifying stream settings",
+		"detail": "Preparing stream command for {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "... {payload}"
+	},
+	"streamTest": {
+		"stage": "Verifying stream settings",
+		"detail": "Testing stream grab for {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "... {payload}"
+	},
+	"valPass": {
+		"stage": "Verifying stream settings",
+		"detail": "Validated {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "✓ {payload}"
+	},
+	"valFail": {
+		"stage": "Verifying stream settings",
+		"detail": "Collecting diagnostics for {name}: {detail}",
+		"statusKey": "{name}",
+		"statusMessage": "X {name}: {detail}",
+		"hasError": true
+	},
+	"streamStart": {
+		"stage": "Starting streams",
+		"detail": "Starting stream for {payload}",
+		"statusKey": "{payload}",
+		"statusMessage": "✓ {payload}"
+	},
+	"streamFail": {
+		"stage": "Starting streams",
+		"detail": "Startup failed for {name}: {detail}",
+		"hasError": true
+	}
+}

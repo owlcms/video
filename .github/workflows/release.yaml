@@ -1,0 +1,365 @@
+name: Release OWLCMS Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., 1.9.0, 1.9.0-beta1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  BUILD_WINDOWS: true
+  BUILD_RASPBERRY: true
+  BUILD_LINUX: true
+  BUILD_MAC: true
+
+jobs:
+  # Linux binaries are built natively, one runner per architecture, as in the
+  # controlpanel release workflow. The fyne-cross linux images lack the EGL
+  # headers required by glfw 3.4, so cross-compilation is not usable here.
+  build_linux_amd64:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.5'
+
+    - name: Install build dependencies
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libgl1-mesa-dev libegl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+    - name: Extract tag
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Substitute tag in version.go
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      run: |
+        cp dist/version.go.template internal/config/version.go
+        sed -i "s/_TAG_/${TAG}/g" internal/config/version.go
+        cat internal/config/version.go
+
+    - name: Build video for Linux amd64
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      env:
+        CGO_ENABLED: "1"
+      run: |
+        mkdir -p artifacts
+        go build -o artifacts/video_linux_amd64 .
+
+    - name: Upload Linux amd64 artifacts
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: linux_amd64_artifacts
+        path: artifacts/*
+
+  build_linux_arm64:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout code
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.5'
+
+    - name: Install build dependencies
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libgl1-mesa-dev libegl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+
+    - name: Extract tag
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Substitute tag in version.go
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      run: |
+        cp dist/version.go.template internal/config/version.go
+        sed -i "s/_TAG_/${TAG}/g" internal/config/version.go
+        cat internal/config/version.go
+
+    - name: Build video for Linux arm64
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      env:
+        CGO_ENABLED: "1"
+      run: |
+        mkdir -p artifacts
+        go build -o artifacts/video_linux_arm64 .
+
+    - name: Upload Linux arm64 artifacts
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: linux_arm64_artifacts
+        path: artifacts/*
+
+  # Windows is the only target still cross-compiled, using fyne-cross as in the
+  # controlpanel release workflow.
+  build_windows:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.5'
+
+    - name: Install fyne-cross
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      run: |
+        go install github.com/fyne-io/fyne-cross@v1.6.2
+        echo "${HOME}/go/bin" >> $GITHUB_PATH
+
+    - name: Extract tag
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Substitute tag in version.go
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      run: |
+        cp dist/version.go.template internal/config/version.go
+        sed -i "s/_TAG_/${TAG}/g" internal/config/version.go
+        cat internal/config/version.go
+
+    - name: Build video for Windows
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      run: |
+        mkdir -p artifacts
+        fyne-cross windows -arch amd64 -env GOTOOLCHAIN=go1.25.5 -name video -app-id app.owlcms.video -icon Icon.png .
+        cp fyne-cross/bin/windows-amd64/video.exe artifacts/video_windows.exe
+
+    - name: Upload Windows artifacts
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: windows_artifacts
+        path: artifacts/*
+
+  # macOS binaries must be compiled natively: cameras uses AVFoundation through
+  # darwinkit, so cgo is required and cross-compilation is not possible.
+  # One runner per architecture, as in the controlpanel release workflow.
+  build_mac_amd64:
+    runs-on: macos-15-intel
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      CGO_CFLAGS: "-mmacosx-version-min=13.0"
+      CGO_LDFLAGS: "-mmacosx-version-min=13.0"
+
+    steps:
+    - name: Checkout code
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.5'
+
+    - name: Extract tag
+      if: ${{ env.BUILD_MAC == 'true' }}
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Substitute tag in version.go
+      if: ${{ env.BUILD_MAC == 'true' }}
+      run: |
+        cp dist/version.go.template internal/config/version.go
+        sed -i '' "s/_TAG_/${TAG}/g" internal/config/version.go
+        cat internal/config/version.go
+
+    - name: Build video for macOS amd64
+      if: ${{ env.BUILD_MAC == 'true' }}
+      env:
+        GOOS: darwin
+        GOARCH: amd64
+        CGO_ENABLED: "1"
+      run: |
+        mkdir -p artifacts
+        go build -o artifacts/video_darwin_amd64 .
+
+    - name: Upload macOS amd64 artifacts
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: mac_amd64_artifacts
+        path: artifacts/*
+
+  build_mac_arm64:
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      CGO_CFLAGS: "-mmacosx-version-min=13.0"
+      CGO_LDFLAGS: "-mmacosx-version-min=13.0"
+
+    steps:
+    - name: Checkout code
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25.5'
+
+    - name: Extract tag
+      if: ${{ env.BUILD_MAC == 'true' }}
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Substitute tag in version.go
+      if: ${{ env.BUILD_MAC == 'true' }}
+      run: |
+        cp dist/version.go.template internal/config/version.go
+        sed -i '' "s/_TAG_/${TAG}/g" internal/config/version.go
+        cat internal/config/version.go
+
+    - name: Build video for macOS arm64
+      if: ${{ env.BUILD_MAC == 'true' }}
+      env:
+        GOOS: darwin
+        GOARCH: arm64
+        CGO_ENABLED: "1"
+      run: |
+        mkdir -p artifacts
+        go build -o artifacts/video_darwin_arm64 .
+
+    - name: Upload macOS arm64 artifacts
+      if: ${{ env.BUILD_MAC == 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: mac_arm64_artifacts
+        path: artifacts/*
+
+  create_release:
+    runs-on: ubuntu-latest
+    needs: [build_linux_amd64, build_linux_arm64, build_windows, build_mac_amd64, build_mac_arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install GitHub CLI
+      run: |
+        wget https://github.com/cli/cli/releases/download/v2.32.0/gh_2.32.0_linux_amd64.deb
+        sudo dpkg -i gh_2.32.0_linux_amd64.deb
+
+    - name: Extract tag
+      id: extract_tag
+      run: |
+        echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+
+    - name: Create dist directory
+      run: mkdir -p dist
+
+    - name: Prepare release notes
+      run: |
+        cp ReleaseNotes.md ./dist/ReleaseNotes.md
+        sed -i "s/_TAG_/${TAG}/g" ./dist/ReleaseNotes.md
+
+    - name: Download Linux amd64 artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: linux_amd64_artifacts
+        path: ./dist
+
+    - name: Download Linux arm64 artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: linux_arm64_artifacts
+        path: ./dist
+
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: windows_artifacts
+        path: ./dist
+
+    - name: Download macOS amd64 artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: mac_amd64_artifacts
+        path: ./dist
+
+    - name: Download macOS arm64 artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: mac_arm64_artifacts
+        path: ./dist
+
+    - name: List artifacts
+      run: ls -la ./dist
+
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        if [[ "${TAG}" == *"-"* ]]; then
+          gh release create ${{ env.TAG }} \
+            --title "OWLCMS Video ${{ env.TAG }}" \
+            --notes-file ./dist/ReleaseNotes.md \
+            --prerelease
+        else
+          gh release create ${{ env.TAG }} \
+            --title "OWLCMS Video ${{ env.TAG }}" \
+            --notes-file ./dist/ReleaseNotes.md
+        fi
+
+    # Upload video executables
+    - name: Upload Windows video executable
+      if: ${{ env.BUILD_WINDOWS == 'true' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ env.TAG }} dist/video_windows.exe
+
+    - name: Upload Linux amd64 video executable
+      if: ${{ env.BUILD_LINUX == 'true' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ env.TAG }} dist/video_linux_amd64
+
+    - name: Upload Raspberry Pi arm64 video executable
+      if: ${{ env.BUILD_RASPBERRY == 'true' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ env.TAG }} dist/video_linux_arm64
+
+    - name: Upload macOS video executables
+      if: ${{ env.BUILD_MAC == 'true' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload ${{ env.TAG }} dist/video_darwin_amd64 dist/video_darwin_arm64

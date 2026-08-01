@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Replays{{if and .HasMultiplePlatforms .Platform}} - Platform {{.Platform}}{{else if .HasMultiplePlatforms}} - No Platform Selected{{end}}</title>
+    <link rel="stylesheet" type="text/css" href="/static/css/styles.css">
+    <script type="text/javascript">
+        let ws;
+        let currentSession = "{{.SelectedSession}}";
+        let reloadPending = false;
+
+        function navigateToSession(session) {
+            const url = new URL(window.location.href);
+
+            if (url.searchParams.get('session') === session) {
+                return;
+            }
+
+            url.searchParams.set('session', session);
+            window.location.href = url.toString();
+        }
+        
+        function updateStatusMessage(text, code) {
+            const statusDiv = document.getElementById('status-message');
+            if (statusDiv) {
+                // Clear any existing content
+                statusDiv.textContent = text || '';
+                
+                // Reset classes and add new ones
+                statusDiv.className = 'status-message';  // Always keep base class
+                if (text) {
+                    switch (code) {
+                        case 0:
+                            statusDiv.classList.add('ready');
+                            break;
+                        case 1:
+                            statusDiv.classList.add('recording');
+                            break;
+                        case 2:
+                            statusDiv.classList.add('trimming');
+                            break;
+                        case 3:
+                            statusDiv.classList.add('error');
+                            break;
+                    }
+                    statusDiv.style.display = 'block';
+                } else {
+                    statusDiv.style.display = 'none';
+                }
+                console.log('Status updated:', text, 'code:', code);
+            }
+        }
+
+        function updateCurrentSession(session) {
+            const sessionSpan = document.querySelector('.current-session');
+            const sessionSelect = document.querySelector('.session-selector');
+            
+            // Update the current session display
+            if (sessionSpan) {
+                sessionSpan.textContent = session ? `Current Session: ${session}` : 'No active session. Session will be updated on next clock start.';
+            }
+            
+            // Update dropdown selection if it exists and matches a session
+            if (sessionSelect) {
+                const options = Array.from(sessionSelect.options);
+                const matchingOption = options.find(opt => opt.value === session);
+                if (matchingOption) {
+                    sessionSelect.value = session;
+                }
+            }
+            
+            currentSession = session;
+        }
+
+        function updateSessionAndStatus(msg) {
+            updateStatusMessage(msg.text, msg.code);
+            
+            // If this is a recording start message
+            if (msg.code === 1 && msg.text.includes("Recording:") && msg.session) {
+                const sessionChanged = msg.session !== currentSession;
+                updateCurrentSession(msg.session);
+                if (sessionChanged) {
+                    navigateToSession(msg.session);
+                }
+            } else if (msg.code === 0 && msg.text === "No active session") {
+                updateCurrentSession('');
+            } else if (msg.code === 0 && msg.text === "Reloading...") {
+                if (!reloadPending) {
+                    reloadPending = true;
+                    location.reload();
+                }
+            }
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = function(event) {
+                console.log('Received:', event.data);
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg && typeof msg.text === 'string') {
+                        updateSessionAndStatus(msg);
+                    }
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            };
+
+            ws.onclose = function() {
+                console.log('WebSocket closed, reconnecting...');
+                setTimeout(connectWebSocket, 1000);
+            };
+        }
+
+        // Start connection when page loads
+        window.addEventListener('load', connectWebSocket);
+    </script>
+</head>
+<body>
+    <h1>Replays{{if and .HasMultiplePlatforms .Platform}} - Platform {{.Platform}}{{else if .HasMultiplePlatforms}} - No Platform Selected{{end}}</h1>
+    
+    {{if .NoSessions}}
+        <div class="no-sessions">No recorded sessions</div>
+    {{else}}
+        <div class="session-info">
+            <div class="current-session">{{if .ActiveSession}}Current Session: {{.ActiveSession}}{{else}}No active session. Active session will switch on next clock start.{{end}}</div>
+            <div class="session-selector-container">
+                <label for="session-select">List Videos from Session:</label>
+                <select id="session-select" class="session-selector" onchange="window.location.href='/?session=' + this.value + '&sortBy={{if .SortByAthlete}}athlete&timeOrder=asc{{else}}time{{end}}&showAll={{if .ShowAll}}true{{else}}false{{end}}'">
+                    <option value="" disabled {{if not .SelectedSession}}selected{{end}}>Select Session</option>
+                    {{range .Sessions}}
+                        <option value="{{.}}" {{if eq . $.SelectedSession}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+                
+                <label for="sort-select" style="margin-left: 20px;">Sort by:</label>
+                <select id="sort-select" class="sort-selector" onchange="window.location.href='/?session={{.SelectedSession}}&sortBy=' + this.value + (this.value === 'athlete' ? '&timeOrder=asc' : '') + '&showAll={{if .ShowAll}}true{{else}}false{{end}}'">
+                    <option value="time" {{if not .SortByAthlete}}selected{{end}}>Time</option>
+                    <option value="athlete" {{if .SortByAthlete}}selected{{end}}>Athlete</option>
+                </select>
+                
+                {{if gt .TotalCount 20}}
+                    <span style="margin-left: 20px;">
+                        {{if .ShowAll}}
+                            <a href="/?session={{.SelectedSession}}&sortBy={{if .SortByAthlete}}athlete&timeOrder=asc{{else}}time{{end}}&showAll=false">Show Recent</a>
+                        {{else}}
+                            <a href="/?session={{.SelectedSession}}&sortBy={{if .SortByAthlete}}athlete&timeOrder=asc{{else}}time{{end}}&showAll=true">Show All ({{.TotalCount}} videos)</a>
+                        {{end}}
+                    </span>
+                {{end}}
+            </div>
+        </div>
+    {{end}}
+    
+    <div id="status-message" class="status-message"></div>
+
+    <ul>
+        {{range .Videos}}
+            <li><a href="/videos/{{.Filename}}" target="_blank" rel="noopener noreferrer">{{.DisplayName}}</a></li>
+        {{end}}
+    </ul>
+</body>
+</html>
