@@ -11,7 +11,7 @@ The application hosts two modules, shown as tabs. Either can be hidden from the 
 - **Cameras** — discovers the connected capture devices, encodes each one, and publishes the streams. The Monitoring tab shows the live state of every stream; the Configuration tab manages the device and encoder settings.
 - **Replays** — records the streams published by the Cameras module and, using the clock and decision information sent by owlcms, produces trimmed replay videos that the jury watches in a web browser.
 
-Running both modules in one process is the normal setup: Replays reads the camera inventory directly from the shared configuration. The modules can also run on separate machines, in which case Replays fetches the camera list over HTTP from the machine running Cameras.
+Running both modules in one process is the normal setup: Replays reads the camera inventory directly from the shared configuration. The modules can also run on separate machines, in which case Replays fetches the camera list over HTTP from the machine running Cameras.  You can select which modules run from the `Modules` menu if you need a split setup.
 
 As an additional benefit, this creates a full video archive of all the lifts in the competition, organized by session and labelled with the athlete, time of day, lift type and attempt number.
 
@@ -44,13 +44,15 @@ Run with `--extractConfig` to create the files with their default contents.
 ```
 --configDir <dir>   directory holding cameras.toml, replays.toml and ffmpeg.toml
 --extractConfig     create the missing configuration files and exit
---cameras           show only the Cameras tabs
---replays           show only the Replays tab
---no-cameras        hide the Cameras tabs
---no-replays        hide the Replays tab
+--cameras           force the Cameras module visible for this launch
+--replays           force the Replays module visible for this launch
+--no-cameras        force the Cameras module hidden for this launch
+--no-replays        force the Replays module hidden for this launch
 --all               include every camera source, including raw formats
 --startport <n>     first port used for multicast allocation
 ```
+
+These switches temporarily override the module selection saved by the **Modules** menu; they do not change it. Changes made from the **Modules** menu are saved for future launches.
 
 ## Equipment setup
 

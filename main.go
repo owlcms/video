@@ -29,23 +29,21 @@ type moduleSelection struct {
 	replays bool
 }
 
+const (
+	moduleCamerasPreferenceKey = "modules.cameras"
+	moduleReplaysPreferenceKey = "modules.replays"
+)
+
 func main() {
 	configDir := flag.String("configDir", "", "directory containing cameras.toml, replays.toml, and ffmpeg.toml (default: ./"+videoconfig.DefaultRoot+")")
 	extractConfig := flag.Bool("extractConfig", false, "create missing configuration files in configDir and exit")
-	enableCameras := flag.Bool("cameras", false, "show the Cameras tabs at startup")
-	disableCameras := flag.Bool("no-cameras", false, "hide the Cameras tabs at startup")
-	enableReplays := flag.Bool("replays", false, "show the Replays tab at startup")
-	disableReplays := flag.Bool("no-replays", false, "hide the Replays tab at startup")
+	enableCameras := flag.Bool("cameras", false, "force the Cameras module visible for this launch")
+	disableCameras := flag.Bool("no-cameras", false, "force the Cameras module hidden for this launch")
+	enableReplays := flag.Bool("replays", false, "force the Replays module visible for this launch")
+	disableReplays := flag.Bool("no-replays", false, "force the Replays module hidden for this launch")
 	includeAll := flag.Bool("all", false, "include all camera sources, including raw formats (typically integrated cameras)")
 	startPort := flag.Int("startport", 0, "starting port for multicast allocation (overrides cameras.toml)")
 	flag.Parse()
-
-	selection, err := resolveSelection(*enableCameras, *disableCameras, *enableReplays, *disableReplays)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	replaysAvailable := selection.replays
 
 	paths, err := videoconfig.Resolve(*configDir)
 	if err != nil {
@@ -72,6 +70,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	os.Setenv("FYNE_TELEMETRY", "0")
+	myApp := app.NewWithID("app.owlcms.video")
+	selection, err := resolveSelection(loadModuleSelection(myApp.Preferences()), *enableCameras, *disableCameras, *enableReplays, *disableReplays)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	replaysAvailable := selection.replays
+
 	if err := cameras.Init(cameras.Options{
 		CamerasConfigPath: paths.Cameras,
 		FFmpegConfigPath:  paths.FFmpeg,
@@ -91,9 +98,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	os.Setenv("FYNE_TELEMETRY", "0")
-
-	myApp := app.NewWithID("app.owlcms.video")
 	myApp.Settings().SetTheme(cameras.Theme(theme.DefaultTheme()))
 	cameras.SetAppIcon(myApp)
 	window := myApp.NewWindow("OWLCMS Video")
@@ -138,6 +142,7 @@ func main() {
 	camerasItem = fyne.NewMenuItem("Cameras", func() {
 		selection.cameras = !selection.cameras
 		refreshTabs()
+		saveModuleSelection(myApp.Preferences(), selection)
 		if selection.cameras {
 			go func() {
 				if err := replays.RefreshLocalCameras(); err != nil {
@@ -149,6 +154,7 @@ func main() {
 	replaysItem = fyne.NewMenuItem("Replays", func() {
 		selection.replays = !selection.replays
 		refreshTabs()
+		saveModuleSelection(myApp.Preferences(), selection)
 	})
 
 	quit := func() {
@@ -208,9 +214,20 @@ func main() {
 	cameras.Cleanup()
 }
 
-// resolveSelection turns the module flags into the initial tab selection.
-// Both modules are shown unless the flags say otherwise.
-func resolveSelection(enableCameras, disableCameras, enableReplays, disableReplays bool) (moduleSelection, error) {
+func loadModuleSelection(preferences fyne.Preferences) moduleSelection {
+	return moduleSelection{
+		cameras: preferences.BoolWithFallback(moduleCamerasPreferenceKey, true),
+		replays: preferences.BoolWithFallback(moduleReplaysPreferenceKey, true),
+	}
+}
+
+func saveModuleSelection(preferences fyne.Preferences, selection moduleSelection) {
+	preferences.SetBool(moduleCamerasPreferenceKey, selection.cameras)
+	preferences.SetBool(moduleReplaysPreferenceKey, selection.replays)
+}
+
+// resolveSelection applies temporary CLI overrides to the saved module selection.
+func resolveSelection(selection moduleSelection, enableCameras, disableCameras, enableReplays, disableReplays bool) (moduleSelection, error) {
 	if enableCameras && disableCameras {
 		return moduleSelection{}, fmt.Errorf("--cameras and --no-cameras are mutually exclusive")
 	}
@@ -218,13 +235,14 @@ func resolveSelection(enableCameras, disableCameras, enableReplays, disableRepla
 		return moduleSelection{}, fmt.Errorf("--replays and --no-replays are mutually exclusive")
 	}
 
-	selection := moduleSelection{cameras: true, replays: true}
-	// An explicit --cameras or --replays narrows the selection to what was asked for.
-	if enableCameras || enableReplays {
-		selection = moduleSelection{cameras: enableCameras, replays: enableReplays}
+	if enableCameras {
+		selection.cameras = true
 	}
 	if disableCameras {
 		selection.cameras = false
+	}
+	if enableReplays {
+		selection.replays = true
 	}
 	if disableReplays {
 		selection.replays = false

@@ -1582,6 +1582,12 @@ func (s *cameraStream) isStopping() bool {
 	return s.stopping
 }
 
+func (s *cameraStream) isRunning() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.running && !s.stopping
+}
+
 func (s *cameraStream) getStopReason() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -3089,6 +3095,14 @@ func BuildUI(window fyne.Window) *UI {
 			resetRTSPRecovery(spec.Key)
 		}
 		logging.InfoLogger.Printf("Source stream started for %s on port %d", spec.Name, spec.OutputPort)
+		stale := make([]*cameraStream, 0, len(*currentStreams))
+		for _, existing := range *currentStreams {
+			if existing == nil || (existing.camera.MatchKey == spec.Key && !existing.isRunning()) {
+				continue
+			}
+			stale = append(stale, existing)
+		}
+		*currentStreams = stale
 		*currentStreams = append(*currentStreams, stream)
 		sort.Slice(*currentStreams, func(i, j int) bool {
 			if (*currentStreams)[i].port != (*currentStreams)[j].port {
@@ -3276,7 +3290,8 @@ func BuildUI(window fyne.Window) *UI {
 				return err
 			}
 			item, _ = findInventorySource(spec.Key)
-			if findStreamIndex(spec.Key) == -1 {
+			streamIndex := findStreamIndex(spec.Key)
+			if streamIndex < 0 || !(*currentStreams)[streamIndex].isRunning() {
 				warning, err := startSingleSource(*item, true)
 				if err != nil {
 					return fmt.Errorf("failed to start %s: %w", item.Name, err)
@@ -4162,7 +4177,7 @@ func BuildUI(window fyne.Window) *UI {
 					button.OnTapped = nil
 					return
 				}
-				if stream != nil {
+				if stream != nil && stream.isRunning() {
 					button.Disable()
 					button.OnTapped = nil
 					return
@@ -4181,7 +4196,7 @@ func BuildUI(window fyne.Window) *UI {
 				button.SetText("")
 				button.SetIcon(theme.MediaStopIcon())
 				button.Importance = widget.DangerImportance
-				if stream == nil || stream.isStopping() {
+				if stream == nil || !stream.isRunning() {
 					button.Disable()
 					button.OnTapped = nil
 					return
