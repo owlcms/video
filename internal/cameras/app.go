@@ -2446,15 +2446,17 @@ func (e *portTableEntry) FocusLost() {
 
 // UI exposes the Cameras module tabs, menus and lifecycle hooks to the host application.
 type UI struct {
-	Monitoring    fyne.CanvasObject
-	Configuration fyne.CanvasObject
-	Menus         []*fyne.Menu
-	Start         func()
-	Stop          func()
+	Monitoring      fyne.CanvasObject
+	Configuration   fyne.CanvasObject
+	Menus           []*fyne.Menu
+	Start           func()
+	StartupComplete <-chan struct{}
+	Stop            func()
 }
 
 // BuildUI constructs the Cameras module interface inside the host window.
 func BuildUI(window fyne.Window) *UI {
+	startupComplete := make(chan struct{})
 	headers := []string{"Name", "Short ID", "Port", "Format", "Encoder", "Resolution", "Expected FPS", "Measured FPS", "Start", "Stop", "Status", "Preview", "Record"}
 	cameraStatusLabel := widget.NewLabel(detectionProgressUIStrings.DetectingSourcesStatus)
 	cameraStatusLabel.TextStyle = fyne.TextStyle{Bold: true}
@@ -4469,6 +4471,7 @@ func BuildUI(window fyne.Window) *UI {
 		startupProgressDialog.Show()
 		reportStartupProgress(recording.ProgressMsg(recording.ProgPreparing, ""))
 		go func() {
+			defer close(startupComplete)
 			startTime := time.Now()
 			logging.InfoLogger.Printf("Initial source detection started")
 			inv := buildSourceInventoryWithProgress(reportStartupProgress)
@@ -4692,10 +4695,11 @@ func BuildUI(window fyne.Window) *UI {
 	}
 
 	return &UI{
-		Monitoring:    monitoringTab,
-		Configuration: configurationTab,
-		Menus:         menus,
-		Start:         startInitialDetection,
-		Stop:          exitUI,
+		Monitoring:      monitoringTab,
+		Configuration:   configurationTab,
+		Menus:           menus,
+		Start:           startInitialDetection,
+		StartupComplete: startupComplete,
+		Stop:            exitUI,
 	}
 }

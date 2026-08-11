@@ -1,10 +1,12 @@
 package replays
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -18,6 +20,7 @@ import (
 	"github.com/owlcms/video/internal/httpServer"
 	"github.com/owlcms/video/internal/logging"
 	"github.com/owlcms/video/internal/monitor"
+	"github.com/owlcms/video/internal/opendir"
 	"github.com/owlcms/video/internal/recording"
 )
 
@@ -28,9 +31,52 @@ var (
 
 	// moduleConfig is the loaded replays configuration; moduleConfigPath is the
 	// file every in-app edit is written back to.
-	moduleConfig     *replayscfg.Config
-	moduleConfigPath string
+	moduleConfig      *replayscfg.Config
+	moduleConfigPath  string
+	startupScanMu     sync.Mutex
+	startupScanCancel context.CancelFunc
+	terminated        bool
 )
+
+// beginStartupScan cancels any in-flight scan and returns the context for a new
+// one. It reports false once the module has been shut down for good.
+func beginStartupScan() (context.Context, bool) {
+	startupScanMu.Lock()
+	defer startupScanMu.Unlock()
+	if terminated {
+		return nil, false
+	}
+	if startupScanCancel != nil {
+		startupScanCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	startupScanCancel = cancel
+	return ctx, true
+}
+
+func isTerminated() bool {
+	startupScanMu.Lock()
+	defer startupScanMu.Unlock()
+	return terminated
+}
+
+// stopServices tears down the Replays services. When terminal is true the
+// module is stopped for good and cannot be restarted.
+func stopServices(terminal bool) {
+	startupScanMu.Lock()
+	if terminal {
+		terminated = true
+	}
+	if startupScanCancel != nil {
+		startupScanCancel()
+		startupScanCancel = nil
+	}
+	startupScanMu.Unlock()
+
+	recording.TerminateRecordings()
+	httpServer.StopServer()
+	monitor.DisconnectMQTT()
+}
 
 func getReplayListHost() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
@@ -62,19 +108,11 @@ func getReplayListHost() string {
 	return "localhost"
 }
 
-// Shutdown gracefully shuts down all Replays services.
+// Shutdown stops all Replays services permanently; the module cannot be
+// restarted afterwards.
 func Shutdown() {
 	logging.InfoLogger.Println("Shutting down replays module...")
-
-	// Stop any ongoing recordings
-	recording.TerminateRecordings()
-
-	// Stop HTTP server
-	httpServer.StopServer()
-
-	// Disconnect MQTT
-	monitor.DisconnectMQTT()
-
+	stopServices(true)
 	logging.InfoLogger.Println("Replays module shutdown complete")
 }
 
@@ -356,7 +394,7 @@ func localMulticastMismatchNote(cfg *replayscfg.Config) string {
 	// If replays is configured for unicast listening, show an informational note
 	if isUnicastIP(replaysIP) {
 		logging.InfoLogger.Printf("Replays is in unicast mode (listening on %s)", replaysIP)
-		return fmt.Sprintf("Unicast mode: listening on %s. The sending Cameras Module must list this machine in its destinations.", replaysIP)
+		return fmt.Sprintf("Unicast mode: listening on %s.\nReplay receiver: localhost (%s).", replaysIP, cameras.PreviewLoopbackAddress)
 	}
 
 	camerasCfg, camerasConfigPath, err := loadStartupCamerasConfigForComparison()
@@ -399,7 +437,7 @@ type Options struct {
 type UI struct {
 	Content             fyne.CanvasObject
 	Menus               []*fyne.Menu
-	Start               func()
+	Start               func(camerasStartupComplete <-chan struct{})
 	StartServer         func(camerasAvailable, replaysAvailable bool)
 	SetCamerasAvailable func(bool)
 }
@@ -522,6 +560,12 @@ func BuildUI(window fyne.Window) *UI {
 	})
 	remoteCamerasItem.Disabled = camerasAvailable
 	replaysMenuItems := []*fyne.MenuItem{
+		fyne.NewMenuItem("Open Replays Directory", func() {
+			if err := opendir.Open(cfg.VideoDir); err != nil {
+				dialog.ShowError(fmt.Errorf("open replays directory: %w", err), window)
+			}
+		}),
+		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Select Cameras", func() {
 			showSelectCamerasDialog(cfg, window)
 		}),
@@ -536,9 +580,7 @@ func BuildUI(window fyne.Window) *UI {
 		fyne.NewMenuItemSeparator(),
 		remoteCamerasItem,
 	}
-	menus := []*fyne.Menu{
-		fyne.NewMenu("Replays", replaysMenuItems...),
-	}
+	var menus []*fyne.Menu
 
 	// Register platform dialog function for monitor package
 	monitor.ShowPlatformDialogFunc = func() {
@@ -577,14 +619,40 @@ func BuildUI(window fyne.Window) *UI {
 		}
 	}()
 
-	start := func() {
-		startStartupScans(cfg, statusLabel, startupMessages)
+	start := func(camerasStartupComplete <-chan struct{}) {
+		ctx, ok := beginStartupScan()
+		if !ok {
+			return
+		}
+		startStartupScans(ctx, cfg, statusLabel, startupMessages, camerasStartupComplete)
 	}
 	startServer := func(camerasAvailable, replaysAvailable bool) {
+		if isTerminated() {
+			return
+		}
 		go httpServer.StartServer(cfg.Port, httpServer.ModuleAvailability{
 			Cameras: camerasAvailable,
 			Replays: replaysAvailable,
 		})
+	}
+	var restartMu sync.Mutex
+	restart := func() {
+		go func() {
+			restartMu.Lock()
+			defer restartMu.Unlock()
+
+			logging.InfoLogger.Println("Restarting replays module...")
+			stopServices(false)
+			startServer(camerasAvailable, true)
+			start(nil)
+		}()
+	}
+	replaysMenuItems = append(replaysMenuItems,
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Restart Replays", restart),
+	)
+	menus = []*fyne.Menu{
+		fyne.NewMenu("Replays", replaysMenuItems...),
 	}
 
 	setCamerasAvailable := func(available bool) {

@@ -1,9 +1,9 @@
 package replays
 
 import (
+	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -11,10 +11,10 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/widget"
 	"github.com/owlcms/video/internal/config"
-	camerascfg "github.com/owlcms/video/internal/config/cameras"
 	replayscfg "github.com/owlcms/video/internal/config/replays"
 	"github.com/owlcms/video/internal/logging"
 	"github.com/owlcms/video/internal/monitor"
+	"github.com/owlcms/video/internal/recording"
 )
 
 type startupScanResult struct {
@@ -22,23 +22,11 @@ type startupScanResult struct {
 	text  string
 }
 
-type cameraStreamProbeTarget struct {
-	order     int
-	index     int
-	label     string
-	ip        net.IP
-	port      int
-	multicast bool
-}
+const startupFakeReplayDuration = 2 * time.Second
+const startupFakeReplayTimeout = 10 * time.Second
+const startupCameraProbeSuccessText = "Cameras Module streams: fake replay test completed."
 
-type cameraStreamProbeResult struct {
-	index  int
-	label  string
-	active bool
-}
-
-const startupCameraProbeTimeout = 150 * time.Millisecond
-const startupCameraProbeSuccessText = "Cameras Module streams: all streams are producing data."
+var runFakeReplayTest = recording.RunFakeReplayTestContext
 
 func mqttBrokerAddressText(broker string) string {
 	trimmed := strings.TrimSpace(broker)
@@ -60,17 +48,6 @@ func startupMQTTProbeSuccessText(broker string) string {
 		return "MQTT server found."
 	}
 	return fmt.Sprintf("MQTT server found at %s.", address)
-}
-
-func (target cameraStreamProbeTarget) listenEndpoint() string {
-	ipText := "0.0.0.0"
-	if target.ip != nil && target.ip.To4() == nil {
-		ipText = "::"
-	}
-	if target.multicast && target.ip != nil {
-		ipText = target.ip.String()
-	}
-	return net.JoinHostPort(ipText, strconv.Itoa(target.port))
 }
 
 func setStatusLabelText(label *widget.Label, text string, bold bool) {
@@ -100,9 +77,12 @@ func setMessageLabelText(label *widget.Label, text string) {
 	label.Refresh()
 }
 
-func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget.Label) {
+func startStartupScans(ctx context.Context, cfg *replayscfg.Config, statusLabel, startupLabel *widget.Label, camerasStartupComplete <-chan struct{}) {
 	if cfg == nil || statusLabel == nil || startupLabel == nil {
 		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	noteText := strings.TrimSpace(localMulticastMismatchNote(cfg))
 	messages := make([]string, 3)
@@ -111,9 +91,15 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 		messages[1] = "Scanning for owlcms server..."
 	}
 	if cfg.Multicast.Enabled && len(cfg.Cameras) > 0 {
-		messages[2] = "Scanning Cameras Module streams..."
+		messages[2] = "Testing Cameras Module streams..."
 	}
-	setMessageLabelText(startupLabel, combineStartupMessages(messages...))
+	initialMessage := combineStartupMessages(messages...)
+	fyne.Do(func() {
+		if ctx.Err() != nil {
+			return
+		}
+		setMessageLabelText(startupLabel, initialMessage)
+	})
 
 	go func() {
 		results := make(chan startupScanResult, 3)
@@ -122,6 +108,9 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 		if config.NoMQTT {
 			logging.InfoLogger.Println("MQTT autodiscovery disabled via -noMQTT flag")
 			fyne.Do(func() {
+				if ctx.Err() != nil {
+					return
+				}
 				setStatusLabelText(statusLabel, "MQTT disabled", false)
 			})
 			results <- startupScanResult{order: 1, text: ""}
@@ -130,9 +119,15 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 			go func() {
 				defer wg.Done()
 				broker, err := monitor.UpdateOwlcmsAddress(cfg, moduleConfigPath)
+				if ctx.Err() != nil {
+					return
+				}
 				if err != nil {
 					logging.ErrorLogger.Printf("Failed to find MQTT broker: %v", err)
 					fyne.Do(func() {
+						if ctx.Err() != nil {
+							return
+						}
 						setStatusLabelText(statusLabel, "", false)
 					})
 					results <- startupScanResult{order: 1, text: fmt.Sprintf("Error: Could not find owlcms server - %v", err)}
@@ -141,6 +136,9 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 
 				cfg.OwlCMS = broker
 				fyne.Do(func() {
+					if ctx.Err() != nil {
+						return
+					}
 					setStatusLabelText(statusLabel, "Ready", false)
 				})
 				results <- startupScanResult{order: 1, text: startupMQTTProbeSuccessText(broker)}
@@ -154,13 +152,23 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				missing := probeConfiguredCameraStreams(cfg.Cameras, startupCameraProbeTimeout)
+				if camerasStartupComplete != nil {
+					select {
+					case <-camerasStartupComplete:
+					case <-ctx.Done():
+						return
+					}
+				}
+				missing := runFakeReplayProbe(ctx, cfg.Cameras)
+				if ctx.Err() != nil {
+					return
+				}
 				if len(missing) == 0 {
 					results <- startupScanResult{order: 2, text: startupCameraProbeSuccessText}
 					return
 				}
 
-				logging.ErrorLogger.Printf("Startup camera stream probe found no packets on: %s", strings.Join(missing, ", "))
+				logging.ErrorLogger.Printf("Startup fake replay test failed for: %s", strings.Join(missing, ", "))
 				results <- startupScanResult{order: 2, text: cameraStreamProbeFailureText(missing)}
 			}()
 		} else {
@@ -173,8 +181,14 @@ func startStartupScans(cfg *replayscfg.Config, statusLabel, startupLabel *widget
 		}()
 
 		for result := range results {
+			if ctx.Err() != nil {
+				continue
+			}
 			message := applyStartupScanResult(messages, result)
 			fyne.Do(func() {
+				if ctx.Err() != nil {
+					return
+				}
 				setMessageLabelText(startupLabel, message)
 			})
 		}
@@ -213,50 +227,27 @@ func combineStartupMessages(messages ...string) string {
 	return strings.Join(lines, "\n")
 }
 
-func probeConfiguredCameraStreams(cameras []config.CameraConfiguration, timeout time.Duration) []string {
+func runFakeReplayProbe(ctx context.Context, cameras []config.CameraConfiguration) []string {
 	labelsByPort := loadStartupCameraStreamLabelsByPort()
-	targets := make([]cameraStreamProbeTarget, 0, len(cameras))
+	labels := make([]string, len(cameras))
 	for index, camera := range cameras {
-		if target, ok := parseCameraStreamProbeTarget(index, camera, labelsByPort); ok {
-			target.order = len(targets)
-			targets = append(targets, target)
-		}
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-
-	results := make(chan cameraStreamProbeResult, len(targets))
-	var wg sync.WaitGroup
-	for _, target := range targets {
-		logging.InfoLogger.Printf("Startup camera stream probe checking %s on %s", target.label, target.listenEndpoint())
-		wg.Add(1)
-		go func(target cameraStreamProbeTarget) {
-			defer wg.Done()
-			results <- cameraStreamProbeResult{
-				index:  target.order,
-				label:  target.label,
-				active: probeCameraStreamTarget(target, timeout),
+		labels[index] = fmt.Sprintf("camera %d", index+1)
+		if port := startupCameraPort(camera); port > 0 {
+			labels[index] = fmt.Sprintf("camera %d (port %d)", index+1, port)
+			if configuredLabel := strings.TrimSpace(labelsByPort[port]); configuredLabel != "" {
+				labels[index] = configuredLabel
 			}
-		}(target)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	statusByIndex := make([]bool, len(targets))
-	labelByIndex := make([]string, len(targets))
-	for result := range results {
-		statusByIndex[result.index] = result.active
-		labelByIndex[result.index] = result.label
+		}
 	}
 
 	missing := make([]string, 0)
-	for index, active := range statusByIndex {
-		if !active {
-			missing = append(missing, labelByIndex[index])
+	for index, result := range runFakeReplayTest(ctx, cameras, startupFakeReplayDuration, startupFakeReplayTimeout) {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if result.Err != nil {
+			logging.WarningLogger.Printf("Startup fake replay test failed for %s: %v", labels[index], result.Err)
+			missing = append(missing, labels[index])
 		}
 	}
 
@@ -300,98 +291,25 @@ func cameraStreamProbeFailureText(missing []string) string {
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("Error: no camera stream packets detected at startup on %s.", strings.Join(missing, ", "))
+	return fmt.Sprintf("Error: fake replay test failed on %s.", strings.Join(missing, ", "))
 }
 
-func parseCameraStreamProbeTarget(index int, camera config.CameraConfiguration, labelsByPort map[int]string) (cameraStreamProbeTarget, bool) {
+func startupCameraPort(camera config.CameraConfiguration) int {
 	raw := strings.TrimSpace(camera.FfmpegCamera)
 	if raw == "" || !strings.HasPrefix(strings.ToLower(raw), "udp:") {
-		return cameraStreamProbeTarget{}, false
+		return 0
 	}
 
 	raw = strings.TrimPrefix(raw, "udp://")
 	raw = strings.TrimPrefix(raw, "udp:")
 	raw = strings.TrimSpace(raw)
-	host, portText, err := net.SplitHostPort(raw)
-	if err != nil {
-		return cameraStreamProbeTarget{}, false
+	separator := strings.LastIndex(raw, ":")
+	if separator < 0 {
+		return 0
 	}
-
-	port, err := strconv.Atoi(strings.TrimSpace(portText))
-	if err != nil || port <= 0 || port > 65535 {
-		return cameraStreamProbeTarget{}, false
+	var port int
+	if _, err := fmt.Sscanf(raw[separator+1:], "%d", &port); err != nil || port <= 0 || port > 65535 {
+		return 0
 	}
-
-	host = strings.Trim(host, "[]")
-	ip := net.ParseIP(host)
-	label := fmt.Sprintf("camera %d (port %d)", index+1, port)
-	if labelsByPort != nil {
-		if configuredLabel := strings.TrimSpace(labelsByPort[port]); configuredLabel != "" {
-			label = configuredLabel
-		}
-	}
-	return cameraStreamProbeTarget{
-		index:     index,
-		label:     label,
-		ip:        ip,
-		port:      port,
-		multicast: ip != nil && ip.IsMulticast(),
-	}, true
-}
-
-func probeCameraStreamTarget(target cameraStreamProbeTarget, timeout time.Duration) bool {
-	if timeout <= 0 {
-		timeout = 350 * time.Millisecond
-	}
-	deadline := time.Now().Add(timeout)
-	network := "udp4"
-	if target.ip != nil && target.ip.To4() == nil {
-		network = "udp6"
-	}
-
-	if target.multicast {
-		conn, err := net.ListenMulticastUDP(network, nil, &net.UDPAddr{IP: target.ip, Port: target.port})
-		if err != nil {
-			logging.WarningLogger.Printf("Startup camera stream probe failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-			return false
-		}
-		defer conn.Close()
-		if err := conn.SetReadDeadline(deadline); err != nil {
-			logging.WarningLogger.Printf("Startup camera stream probe deadline failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-			return false
-		}
-		buffer := make([]byte, camerascfg.PktSize)
-		if _, _, err := conn.ReadFromUDP(buffer); err == nil {
-			logging.InfoLogger.Printf("Startup camera stream probe detected packets for %s on %s", target.label, target.listenEndpoint())
-			return true
-		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			logging.WarningLogger.Printf("Startup camera stream probe timed out for %s on %s after %s", target.label, target.listenEndpoint(), timeout)
-			return false
-		} else {
-			logging.WarningLogger.Printf("Startup camera stream probe read failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-			return false
-		}
-	}
-
-	conn, err := net.ListenUDP(network, &net.UDPAddr{Port: target.port})
-	if err != nil {
-		logging.WarningLogger.Printf("Startup camera stream probe failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-		return false
-	}
-	defer conn.Close()
-	if err := conn.SetReadDeadline(deadline); err != nil {
-		logging.WarningLogger.Printf("Startup camera stream probe deadline failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-		return false
-	}
-	buffer := make([]byte, camerascfg.PktSize)
-	if _, _, err := conn.ReadFromUDP(buffer); err == nil {
-		logging.InfoLogger.Printf("Startup camera stream probe detected packets for %s on %s", target.label, target.listenEndpoint())
-		return true
-	} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		logging.WarningLogger.Printf("Startup camera stream probe timed out for %s on %s after %s", target.label, target.listenEndpoint(), timeout)
-		return false
-	} else {
-		logging.WarningLogger.Printf("Startup camera stream probe read failed for %s on %s: %v", target.label, target.listenEndpoint(), err)
-		return false
-	}
+	return port
 }
