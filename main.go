@@ -19,6 +19,7 @@ import (
 	"github.com/owlcms/video/internal/config"
 	"github.com/owlcms/video/internal/logging"
 	"github.com/owlcms/video/internal/menubar"
+	"github.com/owlcms/video/internal/opendir"
 	"github.com/owlcms/video/internal/replays"
 	"github.com/owlcms/video/internal/videoconfig"
 )
@@ -169,8 +170,8 @@ func main() {
 
 	menus := []*fyne.Menu{
 		fyne.NewMenu("File",
-			fyne.NewMenuItem("Open Configuration Directory", func() {
-				if err := openConfigurationDirectory(paths.Root); err != nil {
+			fyne.NewMenuItem("Open Application Directory", func() {
+				if err := opendir.Open(paths.Root); err != nil {
 					dialog.ShowError(err, window)
 				}
 			}),
@@ -207,7 +208,11 @@ func main() {
 		camerasUI.Start()
 	}
 	if replaysAvailable {
-		replaysUI.Start()
+		if selection.cameras {
+			replaysUI.Start(camerasUI.StartupComplete)
+		} else {
+			replaysUI.Start(nil)
+		}
 	}
 	myApp.Run()
 
