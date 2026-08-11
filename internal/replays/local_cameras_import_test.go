@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/owlcms/video/internal/config"
@@ -90,7 +89,7 @@ transport = "tcp"
 	}
 }
 
-func TestLoadLocalCamerasImportPreviewFlagsUnicastWithoutLocalDestination(t *testing.T) {
+func TestLoadLocalCamerasImportPreviewAddsLoopbackUnicastDestination(t *testing.T) {
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "cameras.toml")
 	content := `
@@ -125,14 +124,14 @@ transport = "tcp"
 		t.Fatalf("load import preview: %v", err)
 	}
 
-	if preview.CompatibilityAllowed {
-		t.Fatalf("expected unicast preview to be incompatible")
+	if !preview.CompatibilityAllowed {
+		t.Fatalf("expected unicast preview to be compatible, got message %q", preview.CompatibilityMessage)
 	}
-	if preview.CamerasAddressValue != "203.0.113.10" {
-		t.Fatalf("expected cameras unicast value 203.0.113.10, got %q", preview.CamerasAddressValue)
+	if preview.CamerasAddressValue != "127.0.0.1" {
+		t.Fatalf("expected loopback cameras address, got %q", preview.CamerasAddressValue)
 	}
-	if !strings.Contains(preview.CompatibilityMessage, "does not allow capturing") {
-		t.Fatalf("expected incompatibility message, got %q", preview.CompatibilityMessage)
+	if len(preview.EnabledDestinations) != 2 || preview.EnabledDestinations[0] != "127.0.0.1" || preview.EnabledDestinations[1] != "203.0.113.10" {
+		t.Fatalf("expected loopback destination to be added, got %#v", preview.EnabledDestinations)
 	}
 }
 

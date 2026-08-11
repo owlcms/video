@@ -91,6 +91,25 @@ func TestApplyDefaultsSetsMonitoringOnForLegacyConfig(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsAddsLoopbackUnicastDestination(t *testing.T) {
+	cfg := &Config{
+		Unicast: UnicastConfig{
+			Enabled:      true,
+			Destinations: []UnicastDestination{{Address: "192.0.2.44", Enabled: true}},
+		},
+	}
+
+	cfg.applyDefaults()
+
+	if len(cfg.Unicast.Destinations) != 2 {
+		t.Fatalf("expected loopback destination to be added, got %#v", cfg.Unicast.Destinations)
+	}
+	loopback := cfg.Unicast.Destinations[1]
+	if loopback.Address != PreviewLoopbackAddress || !loopback.Enabled {
+		t.Fatalf("expected enabled loopback destination, got %#v", loopback)
+	}
+}
+
 func TestSerializeIncludesMonitoringOnFlag(t *testing.T) {
 	cfg := &Config{
 		Multicast: MulticastConfig{IP: "239.255.0.1", StartPort: 9001},

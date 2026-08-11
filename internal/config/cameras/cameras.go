@@ -324,6 +324,21 @@ func (c *Config) applyDefaults() {
 	if c.Unicast.StartPort == 0 {
 		c.Unicast.StartPort = 9001
 	}
+	if c.Unicast.Enabled {
+		hasLoopback := false
+		for _, destination := range c.Unicast.Destinations {
+			if NormalizeUnicastDestinationAddress(destination.Address) == PreviewLoopbackAddress {
+				hasLoopback = true
+				break
+			}
+		}
+		if !hasLoopback {
+			c.Unicast.Destinations = append(c.Unicast.Destinations, UnicastDestination{
+				Address: PreviewLoopbackAddress,
+				Enabled: true,
+			})
+		}
+	}
 	for i := range c.RTSPSources {
 		if c.RTSPSources[i].On == nil {
 			c.RTSPSources[i].On = boolPtr(true)
