@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -46,6 +47,18 @@ func applyFFmpegPath(path string) error {
 
 // on other platforms, we try to use the system-installed ffmpeg
 func findFFmpeg() string {
+	// A macOS GUI app inherits the bare launchd PATH, which never contains
+	// Homebrew, so probe the package manager directories before the PATH.
+	if runtime.GOOS == "darwin" {
+		for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"} {
+			candidate := filepath.Join(dir, "ffmpeg")
+			if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+				logging.InfoLogger.Printf("Found ffmpeg at: %s", candidate)
+				return candidate
+			}
+		}
+	}
+
 	// Try to find ffmpeg in PATH
 	if path, err := exec.LookPath("ffmpeg"); err == nil {
 		logging.InfoLogger.Printf("Found ffmpeg in PATH at: %s", path)
