@@ -6,5 +6,6 @@
   - Configuration is a single directory holding `cameras.toml`, `replays.toml` and `ffmpeg.toml`, selected with `--configDir` and created with `--extractConfig`.
   - Replays reads the camera inventory from the shared `cameras.toml` when both modules run on the same machine, and fetches it over HTTP from Cameras' `/api/cameras/config` endpoint when Cameras runs on a separate machine.
   - The web endpoints are unchanged, so existing OBS browser sources keep working.
+  - On macOS checks for a homebrew-installed version of ffmpeg before the system path.
 
 Earlier history is in the [owlcms/replays](https://github.com/owlcms/replays) repository, which is no longer maintained.
