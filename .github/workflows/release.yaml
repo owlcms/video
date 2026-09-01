@@ -204,7 +204,13 @@ jobs:
         CGO_ENABLED: "1"
       run: |
         mkdir -p artifacts
-        go build -o artifacts/video_darwin_amd64 .
+        # Camera access (TCC) requires an Info.plist with NSCameraUsageDescription;
+        # the binary is not distributed as an .app bundle, so embed the plist in
+        # the executable and sign it so macOS has a code identity to authorize.
+        sed "s/_TAG_/${TAG}/g" dist/Info.plist.template > build_info.plist
+        go build -ldflags "-linkmode external -extldflags '-Wl,-sectcreate,__TEXT,__info_plist,build_info.plist'" -o artifacts/video_darwin_amd64 .
+        codesign --force --sign - artifacts/video_darwin_amd64
+        otool -s __TEXT __info_plist artifacts/video_darwin_amd64 | head -n 2
 
     - name: Upload macOS amd64 artifacts
       if: ${{ env.BUILD_MAC == 'true' }}
@@ -251,7 +257,13 @@ jobs:
         CGO_ENABLED: "1"
       run: |
         mkdir -p artifacts
-        go build -o artifacts/video_darwin_arm64 .
+        # Camera access (TCC) requires an Info.plist with NSCameraUsageDescription;
+        # the binary is not distributed as an .app bundle, so embed the plist in
+        # the executable and sign it so macOS has a code identity to authorize.
+        sed "s/_TAG_/${TAG}/g" dist/Info.plist.template > build_info.plist
+        go build -ldflags "-linkmode external -extldflags '-Wl,-sectcreate,__TEXT,__info_plist,build_info.plist'" -o artifacts/video_darwin_arm64 .
+        codesign --force --sign - artifacts/video_darwin_arm64
+        otool -s __TEXT __info_plist artifacts/video_darwin_arm64 | head -n 2
 
     - name: Upload macOS arm64 artifacts
       if: ${{ env.BUILD_MAC == 'true' }}

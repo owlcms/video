@@ -52,4 +52,5 @@ auto.toml
 go.work.sum
 /video
 /Video.app/
+/build_info.plist
 NUL
