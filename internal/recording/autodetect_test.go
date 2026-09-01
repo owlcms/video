@@ -3,8 +3,10 @@ package recording
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	ffmpegcfg "github.com/owlcms/video/internal/config/ffmpeg"
 )
@@ -188,6 +190,21 @@ func TestParseAVFoundationModesAndPixelFormat(t *testing.T) {
 [avfoundation @ 0x1]   yuyv422`
 	if got := parseAVFoundationPixelFormat(pixelOutput); got != "uyvy422" {
 		t.Fatalf("parseAVFoundationPixelFormat() = %q, want uyvy422", got)
+	}
+}
+
+func TestRunAVFoundationProbeStopsTimedOutProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep command is not available on Windows")
+	}
+
+	start := time.Now()
+	completed := runAVFoundationProbe(CreateHiddenCmd("sleep", "30"), "test", "camera", 20*time.Millisecond)
+	if completed {
+		t.Fatal("runAVFoundationProbe() reported completion after timeout")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("runAVFoundationProbe() took %s to stop timed-out process", elapsed)
 	}
 }
 

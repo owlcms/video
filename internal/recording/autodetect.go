@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -764,6 +766,34 @@ var avfoundationVideoDeviceRe = regexp.MustCompile(`\[(\d+)\]\s+(.+)$`)
 var avfoundationModeRe = regexp.MustCompile(`(\d+)x(\d+)@\[([^\]]+)\]fps`)
 var avfoundationPixelFormatRe = regexp.MustCompile(`\]\s+([a-zA-Z0-9]+)\s*$`)
 
+const avfoundationProbeTimeout = 10 * time.Second
+
+func runAVFoundationProbe(cmd *exec.Cmd, stage, deviceName string, timeout time.Duration) bool {
+	if err := cmd.Start(); err != nil {
+		logging.WarningLogger.Printf("Could not start AVFoundation %s probe for %s: %v", stage, deviceName, err)
+		return false
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		logging.WarningLogger.Printf("AVFoundation %s probe timed out for %s after %s", stage, deviceName, timeout)
+		if err := forceKillCmd(cmd); err != nil {
+			logging.WarningLogger.Printf("Could not stop timed-out AVFoundation %s probe for %s: %v", stage, deviceName, err)
+		}
+		<-done
+		return false
+	}
+}
+
 // detectCamerasDarwin uses FFmpeg's AVFoundation input to detect macOS cameras.
 func detectCamerasDarwin(cfg *ffmpeg.Config, progress ProbeProgressFunc, skip func(name, matchKey, attachmentPath string) bool) []DetectedCamera {
 	path := config.GetFFmpegPath()
@@ -778,7 +808,9 @@ func detectCamerasDarwin(cfg *ffmpeg.Config, progress ProbeProgressFunc, skip fu
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	_ = cmd.Run() // Listing devices intentionally fails because there is no input.
+	if !runAVFoundationProbe(cmd, "device-list", "all devices", avfoundationProbeTimeout) {
+		return nil
+	}
 
 	metadataByName := avFoundationVideoDeviceMetadata()
 	var cameras []DetectedCamera
@@ -895,7 +927,9 @@ func ResolveAVFoundationDeviceIndex(name string) (string, bool) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	_ = cmd.Run() // Listing devices intentionally fails because there is no input.
+	if !runAVFoundationProbe(cmd, "device-list", "all devices", avfoundationProbeTimeout) {
+		return "", false
+	}
 
 	for _, device := range parseAVFoundationVideoDevices(out.String()) {
 		if strings.ToLower(strings.TrimSpace(device.name)) == trimmed {
@@ -916,7 +950,9 @@ func probeAVFoundationDevice(ffmpegPath string, device avfoundationDevice, cfg *
 	var modeOutput bytes.Buffer
 	modeProbe.Stdout = &modeOutput
 	modeProbe.Stderr = &modeOutput
-	_ = modeProbe.Run() // The invalid framerate prints the supported modes without capturing.
+	if !runAVFoundationProbe(modeProbe, "mode", device.name, avfoundationProbeTimeout) {
+		return nil
+	}
 
 	modes := parseAVFoundationModes(modeOutput.String())
 	if len(modes) == 0 {
@@ -938,7 +974,9 @@ func probeAVFoundationDevice(ffmpegPath string, device avfoundationDevice, cfg *
 	var pixelOutput bytes.Buffer
 	pixelProbe.Stdout = &pixelOutput
 	pixelProbe.Stderr = &pixelOutput
-	_ = pixelProbe.Run() // The unsupported default format prints supported formats; one null frame bounds the probe.
+	if !runAVFoundationProbe(pixelProbe, "pixel-format", device.name, avfoundationProbeTimeout) {
+		return nil
+	}
 	pixFmt := parseAVFoundationPixelFormat(pixelOutput.String())
 	if pixFmt == "" {
 		logging.InfoLogger.Printf("No AVFoundation pixel format reported for %s", device.name)

@@ -938,6 +938,14 @@ func TestBuildUSBSourcesWithProgressKeepsDisabledAssignmentsDisabledWhenDetected
 	}
 }
 
+func TestAssembleSourceInventoryReportsNoEnabledCamera(t *testing.T) {
+	inv := assembleSourceInventory([]sourceSpec{{Detected: true, Enabled: false}}, nil, nil)
+	const expected = "No enabled camera detected. Enable a camera or add an RTSP source."
+	if inv.Status != expected {
+		t.Fatalf("status = %q, want %q", inv.Status, expected)
+	}
+}
+
 func TestBuildUSBSourcesWithProgressDisablesAbsentAssignment(t *testing.T) {
 	previousConfig := camerasConfig
 	previousFFmpegConfig := ffmpegConfig

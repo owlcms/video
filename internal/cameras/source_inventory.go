@@ -155,7 +155,7 @@ func assembleSourceInventory(usbSpecs, rtspSpecs []sourceSpec, encoder *recordin
 	case len(inv.Active) == 0 && len(inv.RTSP) > 0:
 		inv.Status = "No active sources. Enable an RTSP source or connect a camera."
 	case len(inv.Active) == 0:
-		inv.Status = "No cameras detected. Connect a camera or add an RTSP source."
+		inv.Status = "No enabled camera detected. Enable a camera or add an RTSP source."
 	default:
 		inv.Status = fmt.Sprintf("%d source(s) ready.", len(inv.Active))
 	}

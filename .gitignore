@@ -51,4 +51,5 @@ video_config/
 auto.toml
 go.work.sum
 /video
+/Video.app/
 NUL
