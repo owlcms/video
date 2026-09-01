@@ -1,5 +1,7 @@
 **Change log**
 
+- 3.0.1: macOS changes for camera permissions when running without a terminal
+
 - 3.0.0: First release of OWLCMS Video, the successor to the separate Cameras and Replays programs.
   - Cameras and Replays are now a single program with one installation and one configuration directory.
   - The **Modules** menu selects which tabs are shown; `--cameras`, `--replays`, `--no-cameras` and `--no-replays` do the same from the command line.
