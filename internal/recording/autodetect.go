@@ -338,7 +338,7 @@ func detectEncodersWithPath(path string, cfg *ffmpeg.Config, progress ProbeProgr
 
 	availableEncoders := parseAvailableH264Encoders(out.Bytes())
 	if progress != nil {
-		reportUnconfiguredEncoders(availableEncoders, cfg, progress)
+		reportUnconfiguredEncoders(availableEncoders, cfg)
 	}
 
 	// Build candidate list from config definitions (order = preference)
@@ -380,7 +380,7 @@ func detectEncodersWithPath(path string, cfg *ffmpeg.Config, progress ProbeProgr
 	return found
 }
 
-func reportUnconfiguredEncoders(available map[string]bool, cfg *ffmpeg.Config, progress ProbeProgressFunc) {
+func reportUnconfiguredEncoders(available map[string]bool, cfg *ffmpeg.Config) {
 	if cfg == nil {
 		return
 	}
@@ -644,35 +644,6 @@ func formatCommandLine(name string, args []string) string {
 		parts = append(parts, strconv.Quote(arg))
 	}
 	return strings.Join(parts, " ")
-}
-
-var ffmpegVersionPattern = regexp.MustCompile(`(?i)^ffmpeg version `)
-
-func isSupportedSystemFFmpeg(path string) bool {
-	cmd := CreateHiddenCmd(path, "-version")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		logging.InfoLogger.Printf("Skipping system ffmpeg candidate %s: failed to query version: %v", path, err)
-		return false
-	}
-
-	versionLine := strings.TrimSpace(out.String())
-	if idx := strings.Index(versionLine, "\n"); idx >= 0 {
-		versionLine = strings.TrimSpace(versionLine[:idx])
-	}
-	if versionLine == "" {
-		logging.InfoLogger.Printf("Skipping system ffmpeg candidate %s: empty version output", path)
-		return false
-	}
-	if !ffmpegVersionPattern.MatchString(versionLine) {
-		logging.InfoLogger.Printf("Skipping system ffmpeg candidate %s: unexpected version output %s", path, versionLine)
-		return false
-	}
-
-	logging.InfoLogger.Printf("System ffmpeg candidate %s is supported: %s", path, versionLine)
-	return true
 }
 
 // testEncoderWithInit tests whether an encoder actually works on this hardware,
@@ -1678,11 +1649,12 @@ func writeAutoConfig(outputPath string, cameras []DetectedCamera, encoders []HwE
 		buf.WriteString(fmt.Sprintf("    description = \"[%s] %s (%s, %s)\"\n", runtime.GOOS, cam.Name, cam.PixFmt, cam.Size))
 		buf.WriteString("    enabled = true\n")
 
-		if cam.Format == "dshow" {
+		switch cam.Format {
+		case "dshow":
 			buf.WriteString(fmt.Sprintf("    camera = 'video=%s'\n", cam.Device))
-		} else if cam.Format == "avfoundation" {
+		case "avfoundation":
 			buf.WriteString(fmt.Sprintf("    camera = '%s:none'\n", cam.Device))
-		} else {
+		default:
 			buf.WriteString(fmt.Sprintf("    camera = '%s'\n", cam.Device))
 		}
 

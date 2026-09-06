@@ -105,18 +105,11 @@ func TestEncoderIsProbeCandidateRequiresAvailableEncoderAndMatchingGPU(t *testin
 	}
 }
 
-func TestReportUnconfiguredEncodersDoesNotUseProgress(t *testing.T) {
+func TestReportUnconfiguredEncoders(t *testing.T) {
 	available := map[string]bool{"h264_amf": true, "h264_nvenc": true, "h264_qsv": true}
 	cfg := testFFmpegConfigWithEncoder("h264_qsv")
-	var messages []string
 
-	reportUnconfiguredEncoders(available, cfg, func(message string) {
-		messages = append(messages, message)
-	})
-
-	if len(messages) != 0 {
-		t.Fatalf("reported %d messages, want 0: %v", len(messages), messages)
-	}
+	reportUnconfiguredEncoders(available, cfg)
 }
 
 func TestParseAVFoundationVideoDevices(t *testing.T) {
