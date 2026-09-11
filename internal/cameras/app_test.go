@@ -17,6 +17,20 @@ import (
 	"github.com/owlcms/video/internal/recording"
 )
 
+func TestMonitoringCameraName(t *testing.T) {
+	for _, test := range []struct{ name, want string }{
+		{"Logitech Webcam C930e [uid:0x123]", "Logitech Webcam C930e"},
+		{"MacBook Air Camera  [uid:6C707045-05AC]", "MacBook Air Camera"},
+		{"Platform A", "Platform A"},
+		{"Camera [front]", "Camera [front]"},
+		{"", ""},
+	} {
+		if got := monitoringCameraName(test.name); got != test.want {
+			t.Errorf("monitoringCameraName(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
 func TestRTSPRetryDelay(t *testing.T) {
 	tests := []struct {
 		attempt int

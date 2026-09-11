@@ -2454,6 +2454,13 @@ type UI struct {
 	Stop            func()
 }
 
+func monitoringCameraName(name string) string {
+	if prefix, _, found := strings.Cut(name, " [uid:"); found && strings.HasSuffix(name, "]") {
+		return strings.TrimSpace(prefix)
+	}
+	return name
+}
+
 // BuildUI constructs the Cameras module interface inside the host window.
 func BuildUI(window fyne.Window) *UI {
 	startupComplete := make(chan struct{})
@@ -4138,7 +4145,7 @@ func BuildUI(window fyne.Window) *UI {
 			cell := obj.(*fyne.Container)
 			label := cell.Objects[0].(*widget.Label)
 			button := cell.Objects[1].(*widget.Button)
-			if id.Col == 4 {
+			if id.Col == 0 || id.Col == 4 {
 				label.Truncation = fyne.TextTruncateEllipsis
 			} else {
 				label.Truncation = fyne.TextTruncateOff
@@ -4163,7 +4170,7 @@ func BuildUI(window fyne.Window) *UI {
 			stream := findStreamForSource(spec.Key)
 
 			var row [13]string
-			row[0] = spec.Name
+			row[0] = monitoringCameraName(spec.Name)
 			row[1] = spec.ShortID
 			row[2] = multicastPort(spec.OutputPort)
 			row[3] = spec.Camera.PixFmt
