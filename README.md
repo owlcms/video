@@ -25,7 +25,7 @@ As an additional benefit, this creates a full video archive of all the lifts in 
 
 Install and update OWLCMS Video from the OWLCMS Control Panel.
 
-Detailed instructions: https://owlcms.github.io/owlcms4-prerelease/#/JuryReplays
+Detailed instructions: https://jflamy.github.io/owlcms4/#/060-Refereeing/030-JuryReplays
 
 ## Configuration
 
