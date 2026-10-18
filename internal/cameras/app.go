@@ -2693,8 +2693,8 @@ func BuildUI(window fyne.Window) *UI {
 		objects := []fyne.CanvasObject{
 			container.NewHBox(
 				fixedWidth(usbEnabledWidth, widget.NewLabel("Enabled")),
-				fixedWidth(usbIdentityWidth, widget.NewLabel("Stable Identity")),
 				fixedWidth(usbNameWidth, widget.NewLabel("Name")),
+				fixedWidth(usbIdentityWidth, widget.NewLabel("Stable Identity")),
 				fixedWidth(usbShortIDWidth, widget.NewLabel("Short ID")),
 				fixedWidth(usbPortWidth, widget.NewLabel("Port")),
 				fixedWidth(usbFormatWidth, widget.NewLabel("Format")),
@@ -4503,6 +4503,18 @@ func BuildUI(window fyne.Window) *UI {
 					reportStartupProgress(recording.ProgressMsg(recording.ProgError, item))
 				}
 			}
+
+			// Show the detected sources now; starting unreachable streams can take a while.
+			fyne.Do(func() {
+				currentInventory = inv
+				if inv.Encoder != nil {
+					currentEncoder = inv.Encoder
+				}
+				updateEncoderStatus()
+				loadInventoryIntoRows(inv)
+				renderMonitoringSourceToggles(inv)
+				table.Refresh()
+			})
 
 			var newStreams []*cameraStream
 			var startupUnicastWarning string

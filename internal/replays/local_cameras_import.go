@@ -42,15 +42,13 @@ type localCamerasImportPreview struct {
 	AdditionalStreams    []localCamerasStream
 }
 
-func monitoringEnabled(value *bool) bool {
-	return value == nil || *value
-}
-
+// collectLocalCamerasStreams lists every enabled source with an output port,
+// whether or not it is currently started in the Cameras Monitoring tab.
 func collectLocalCamerasStreams(cfg *camerascfg.Config) []localCamerasStream {
 	streams := make([]localCamerasStream, 0, len(cfg.DeviceAssignments)+len(cfg.RTSPSources))
 
 	for _, assignment := range cfg.DeviceAssignments {
-		if assignment.Disabled || !monitoringEnabled(assignment.On) || assignment.OutputPort <= 0 {
+		if assignment.Disabled || assignment.OutputPort <= 0 {
 			continue
 		}
 		name := strings.TrimSpace(assignment.Name)
@@ -66,7 +64,7 @@ func collectLocalCamerasStreams(cfg *camerascfg.Config) []localCamerasStream {
 	}
 
 	for _, source := range cfg.RTSPSources {
-		if !source.Enabled || !monitoringEnabled(source.On) || source.OutputPort <= 0 {
+		if !source.Enabled || source.OutputPort <= 0 {
 			continue
 		}
 		name := strings.TrimSpace(source.Name)

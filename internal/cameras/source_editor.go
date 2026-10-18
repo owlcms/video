@@ -231,8 +231,8 @@ func (r *usbSourceRow) object(probe func(), _ func() bool, remove func(), restar
 	}
 	return container.NewHBox(
 		fixedWidth(usbEnabledWidth, r.enabledCheck),
-		fixedWidth(usbIdentityWidth, identity),
 		fixedWidth(usbNameWidth, r.nameEntry),
+		fixedWidth(usbIdentityWidth, identity),
 		fixedWidth(usbShortIDWidth, r.shortIDEntry),
 		fixedWidth(usbPortWidth, r.portEntry),
 		fixedWidth(usbFormatWidth, r.formatSelect),

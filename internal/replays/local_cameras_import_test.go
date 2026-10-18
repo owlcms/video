@@ -136,22 +136,25 @@ transport = "tcp"
 }
 
 func TestCollectLocalCamerasStreamsSkipsDisabledSources(t *testing.T) {
+	stopped := false
 	cfg := &camerascfg.Config{
 		DeviceAssignments: []camerascfg.DeviceAssignment{
 			{Name: "Enabled USB", ShortID: "C1", OutputPort: 9001},
 			{Name: "Disabled USB", ShortID: "C2", OutputPort: 9002, Disabled: true},
+			{Name: "Stopped USB", ShortID: "C3", OutputPort: 9003, On: &stopped},
 		},
 		RTSPSources: []camerascfg.RTSPSource{
 			{Name: "Enabled RTSP", ShortID: "R1", OutputPort: 9005, Enabled: true},
 			{Name: "Disabled RTSP", ShortID: "R2", OutputPort: 9006, Enabled: false},
+			{Name: "Stopped RTSP", ShortID: "R3", OutputPort: 9007, Enabled: true, On: &stopped},
 		},
 	}
 
 	streams := collectLocalCamerasStreams(cfg)
-	if len(streams) != 2 {
-		t.Fatalf("expected 2 streams, got %d", len(streams))
+	if len(streams) != 4 {
+		t.Fatalf("expected 4 streams, got %d: %#v", len(streams), streams)
 	}
-	if streams[0].ShortID != "C1" || streams[1].ShortID != "R1" {
+	if streams[0].ShortID != "C1" || streams[1].ShortID != "C3" || streams[2].ShortID != "R1" || streams[3].ShortID != "R3" {
 		t.Fatalf("unexpected collected streams: %#v", streams)
 	}
 }
