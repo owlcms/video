@@ -55,7 +55,7 @@ func RunFakeReplayTestContext(ctx context.Context, cameras []config.CameraConfig
 			filename := filepath.Join(probeDir, fmt.Sprintf("camera-%d.mkv", index+1))
 			args := buildRecordingArgs(filename, camera)
 			args = append(args[:len(args)-1], "-t", fmt.Sprintf("%.3f", duration.Seconds()), filename)
-			cmd := CreateFfmpegCmd(args, "fake replay test")
+			cmd := CreateFfmpegCmd(args, "replay sampling test")
 			if err := cmd.Start(); err != nil {
 				results[index] = FakeReplayResult{Camera: index + 1, Err: fmt.Errorf("start ffmpeg: %w", err)}
 				return

@@ -36,10 +36,10 @@ func TestRunFakeReplayProbeReportsFailedCameras(t *testing.T) {
 func TestCombineStartupMessagesKeepsUnicastFirst(t *testing.T) {
 	combined := combineStartupMessages(
 		"Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).",
-		"Error: fake replay test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004).",
+		"Error: replay sampling test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004).",
 	)
 
-	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nError: fake replay test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004)."
+	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nError: replay sampling test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004)."
 	if combined != expected {
 		t.Fatalf("unexpected combined messages:\nexpected: %q\nactual:   %q", expected, combined)
 	}
@@ -47,12 +47,12 @@ func TestCombineStartupMessagesKeepsUnicastFirst(t *testing.T) {
 
 func TestOrderedStartupScanMessagesPlacesOwlcmsBeforeCameraWarning(t *testing.T) {
 	combined := orderedStartupScanMessages(3, []startupScanResult{
-		{order: 2, text: "Error: fake replay test failed on Platform Left [C1] (port 9002)."},
+		{order: 2, text: "Error: replay sampling test failed on Platform Left [C1] (port 9002)."},
 		{order: 0, text: "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1)."},
 		{order: 1, text: "Error: Could not find owlcms server - MQTT broker not found on the network"},
 	})
 
-	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nError: Could not find owlcms server - MQTT broker not found on the network\nError: fake replay test failed on Platform Left [C1] (port 9002)."
+	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nError: Could not find owlcms server - MQTT broker not found on the network\nError: replay sampling test failed on Platform Left [C1] (port 9002)."
 	if combined != expected {
 		t.Fatalf("unexpected ordered startup messages:\nexpected: %q\nactual:   %q", expected, combined)
 	}
@@ -67,7 +67,7 @@ func TestApplyStartupScanResultShowsCameraSuccessBeforeOwlcmsFinishes(t *testing
 
 	combined := applyStartupScanResult(messages, startupScanResult{order: 2, text: startupCameraProbeSuccessText})
 
-	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nScanning for owlcms server...\nCameras Module streams: fake replay test completed."
+	expected := "Unicast mode: listening on 0.0.0.0.\nReplay receiver: localhost (127.0.0.1).\nScanning for owlcms server...\nCameras Module streams: replay sampling test completed."
 	if combined != expected {
 		t.Fatalf("unexpected incremental startup messages:\nexpected: %q\nactual:   %q", expected, combined)
 	}
@@ -115,7 +115,7 @@ func TestCameraStreamProbeFailureTextListsMissingStreams(t *testing.T) {
 		"Platform Right [C2] (port 9004)",
 	})
 
-	expected := "Error: fake replay test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004)."
+	expected := "Error: replay sampling test failed on Platform Left [C1] (port 9002), Platform Right [C2] (port 9004)."
 	if message != expected {
 		t.Fatalf("expected %q, got %q", expected, message)
 	}

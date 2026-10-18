@@ -24,7 +24,7 @@ type startupScanResult struct {
 
 const startupFakeReplayDuration = 2 * time.Second
 const startupFakeReplayTimeout = 10 * time.Second
-const startupCameraProbeSuccessText = "Cameras Module streams: fake replay test completed."
+const startupCameraProbeSuccessText = "Cameras Module streams: replay sampling test completed."
 
 var runFakeReplayTest = recording.RunFakeReplayTestContext
 
@@ -171,7 +171,7 @@ func startStartupScans(ctx context.Context, cfg *replayscfg.Config, statusLabel,
 					return
 				}
 
-				logging.ErrorLogger.Printf("Startup fake replay test failed for: %s", strings.Join(missing, ", "))
+				logging.ErrorLogger.Printf("Startup replay sampling test failed for: %s", strings.Join(missing, ", "))
 				results <- startupScanResult{order: 2, text: cameraStreamProbeFailureText(missing)}
 			}()
 		} else {
@@ -249,7 +249,7 @@ func runFakeReplayProbe(ctx context.Context, cameras []config.CameraConfiguratio
 			return nil
 		}
 		if result.Err != nil {
-			logging.WarningLogger.Printf("Startup fake replay test failed for %s: %v", labels[index], result.Err)
+			logging.WarningLogger.Printf("Startup replay sampling test failed for %s: %v", labels[index], result.Err)
 			missing = append(missing, labels[index])
 		}
 	}
@@ -294,7 +294,7 @@ func cameraStreamProbeFailureText(missing []string) string {
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("Error: fake replay test failed on %s.", strings.Join(missing, ", "))
+	return fmt.Sprintf("Error: replay sampling test failed on %s.", strings.Join(missing, ", "))
 }
 
 func startupCameraPort(camera config.CameraConfiguration) int {
