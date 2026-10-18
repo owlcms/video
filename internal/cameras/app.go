@@ -2685,6 +2685,11 @@ func BuildUI(window fyne.Window) *UI {
 		if sortUSBRows != nil {
 			sortUSBRows()
 		}
+		if len(usbRows) == 0 {
+			usbRowsContainer.Objects = []fyne.CanvasObject{widget.NewLabel("No Sources Detected")}
+			usbRowsContainer.Refresh()
+			return
+		}
 		objects := []fyne.CanvasObject{
 			container.NewHBox(
 				fixedWidth(usbEnabledWidth, widget.NewLabel("Enabled")),
