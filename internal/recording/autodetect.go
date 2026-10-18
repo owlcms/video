@@ -733,6 +733,26 @@ type avFoundationDeviceMetadata struct {
 	transportType string
 }
 
+const avfoundationUIDKeyPrefix = "uid:"
+
+var avfoundationUIDRe = regexp.MustCompile(`\[uid:([^\]]+)\]`)
+
+// lookupAVFoundationMetadata matches an FFmpeg device name, which can carry
+// "[uid:...]" and "[serial:...]" suffixes, to the native AVFoundation metadata.
+func lookupAVFoundationMetadata(metadata map[string]avFoundationDeviceMetadata, deviceName string) (avFoundationDeviceMetadata, bool) {
+	if match := avfoundationUIDRe.FindStringSubmatch(deviceName); match != nil {
+		if found, ok := metadata[avfoundationUIDKeyPrefix+strings.ToLower(strings.TrimSpace(match[1]))]; ok {
+			return found, true
+		}
+	}
+	name := strings.TrimSpace(deviceName)
+	if prefix, _, ok := strings.Cut(name, " ["); ok {
+		name = strings.TrimSpace(prefix)
+	}
+	found, ok := metadata[strings.ToLower(name)]
+	return found, ok
+}
+
 var avfoundationVideoDeviceRe = regexp.MustCompile(`\[(\d+)\]\s+(.+)$`)
 var avfoundationModeRe = regexp.MustCompile(`(\d+)x(\d+)@\[([^\]]+)\]fps`)
 var avfoundationPixelFormatRe = regexp.MustCompile(`\]\s+([a-zA-Z0-9]+)\s*$`)
@@ -794,10 +814,10 @@ func detectCamerasDarwin(cfg *ffmpeg.Config, progress ProbeProgressFunc, skip fu
 			progress(ProgressMsg(ProgLocalSource, device.name))
 		}
 		if camera := probeAVFoundationDevice(path, device, cfg); camera != nil {
-			if metadata, ok := metadataByName[strings.ToLower(strings.TrimSpace(device.name))]; ok {
+			if metadata, ok := lookupAVFoundationMetadata(metadataByName, device.name); ok {
 				camera.TransportType = metadata.transportType
 			} else {
-				logging.WarningLogger.Printf("No native AVFoundation transport metadata for %s; includeAll=false will exclude it", device.name)
+				logging.WarningLogger.Printf("No native AVFoundation transport metadata for %s; it is listed even when includeAll=false", device.name)
 			}
 			cameras = append(cameras, *camera)
 		}

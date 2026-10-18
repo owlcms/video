@@ -18,14 +18,16 @@ func avFoundationVideoDeviceMetadata() map[string]avFoundationDeviceMetadata {
 		avfoundation.CaptureDevicePositionUnspecified,
 	)
 	devices := session.Devices()
-	metadataByName := make(map[string]avFoundationDeviceMetadata, len(devices))
+	metadataByName := make(map[string]avFoundationDeviceMetadata, 2*len(devices))
 	for _, device := range devices {
-		name := strings.ToLower(strings.TrimSpace(device.LocalizedName()))
-		if name == "" {
-			continue
-		}
-		metadataByName[name] = avFoundationDeviceMetadata{
+		metadata := avFoundationDeviceMetadata{
 			transportType: fourCC(device.TransportType()),
+		}
+		if uid := strings.ToLower(strings.TrimSpace(device.UniqueID())); uid != "" {
+			metadataByName[avfoundationUIDKeyPrefix+uid] = metadata
+		}
+		if name := strings.ToLower(strings.TrimSpace(device.LocalizedName())); name != "" {
+			metadataByName[name] = metadata
 		}
 	}
 	return metadataByName

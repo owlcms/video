@@ -1469,3 +1469,72 @@ func TestUVCDeviceStartupProbeUsesStableAVFoundationName(t *testing.T) {
 		t.Fatalf("avfoundationInput() = %q, want stable device input %q", got, want)
 	}
 }
+
+func TestHiddenIntegratedCameraAssignmentIsNotListedAsStale(t *testing.T) {
+	previousConfig := camerasConfig
+	previousFFmpegConfig := ffmpegConfig
+	previousDetect := detectUSBCamerasWithConfigAndProgress
+	previousHidden := hiddenIntegratedCameras
+	defer func() {
+		camerasConfig = previousConfig
+		ffmpegConfig = previousFFmpegConfig
+		detectUSBCamerasWithConfigAndProgress = previousDetect
+		hiddenIntegratedCameras = previousHidden
+	}()
+
+	camerasConfig = &camerascfg.Config{
+		Cameras: camerascfg.CamerasSettings{IncludeAll: false},
+		DeviceAssignments: []camerascfg.DeviceAssignment{{
+			MatchKey:   "builtin-camera",
+			Name:       "Built-in Camera",
+			ShortID:    "C6",
+			OutputPort: 9016,
+			Disabled:   true,
+		}},
+	}
+	ffmpegConfig = &ffmpegcfg.Config{}
+	detectUSBCamerasWithConfigAndProgress = func(cfg *ffmpegcfg.Config, progress recording.ProbeProgressFunc, skip func(name, matchKey, attachmentPath string) bool) []recording.DetectedCamera {
+		return []recording.DetectedCamera{{
+			Name:     "Built-in Camera",
+			Format:   "v4l2",
+			PixFmt:   "yuyv422",
+			MatchKey: "builtin-camera",
+		}}
+	}
+
+	sources, _ := buildUSBSourcesWithProgress(9001, map[int]struct{}{}, map[string]struct{}{}, nil)
+	if len(sources) != 0 {
+		t.Fatalf("expected hidden built-in camera to produce no rows, got %#v", sources)
+	}
+
+	cached := buildUSBSourcesFromDetected(cachedDetectedCameras(sources), 9001, map[int]struct{}{}, map[string]struct{}{}, nil)
+	if len(cached) != 0 {
+		t.Fatalf("expected cached rebuild to keep hiding the built-in camera, got %#v", cached)
+	}
+}
+
+func TestSimulateHidesIntegratedCamerasEvenWithIncludeAll(t *testing.T) {
+	previousConfig := camerasConfig
+	previousFFmpegConfig := ffmpegConfig
+	previousNoVideo := config.NoVideo
+	defer func() {
+		camerasConfig = previousConfig
+		ffmpegConfig = previousFFmpegConfig
+		config.NoVideo = previousNoVideo
+	}()
+
+	camerasConfig = &camerascfg.Config{Cameras: camerascfg.CamerasSettings{IncludeAll: true}}
+	ffmpegConfig = &ffmpegcfg.Config{}
+	config.NoVideo = true
+
+	builtIn := recording.DetectedCamera{Name: "Built-in Camera", Format: "v4l2", PixFmt: "yuyv422", MatchKey: "builtin"}
+	external := recording.DetectedCamera{Name: "USB Camera", Format: "v4l2", PixFmt: "mjpeg", MatchKey: "usb"}
+
+	sources := buildUSBSourcesFromDetected([]recording.DetectedCamera{builtIn, external}, 9001, map[int]struct{}{}, map[string]struct{}{}, nil)
+	if len(sources) != 1 || sources[0].Key != "usb" {
+		t.Fatalf("expected only the external camera in --simulate mode, got %#v", sources)
+	}
+	if !camerasConfig.Cameras.IncludeAll {
+		t.Fatal("--simulate must not change the saved includeAll setting")
+	}
+}

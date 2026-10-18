@@ -4704,6 +4704,11 @@ func BuildUI(window fyne.Window) *UI {
 		rescanBtn.OnTapped()
 	})
 	includeInternalCamerasItem.Checked = camerasConfig.Cameras.IncludeAll
+	if config.NoVideo {
+		// --simulate always hides built-in cameras.
+		includeInternalCamerasItem.Checked = false
+		includeInternalCamerasItem.Disabled = true
+	}
 
 	menus := []*fyne.Menu{
 		fyne.NewMenu("Cameras",

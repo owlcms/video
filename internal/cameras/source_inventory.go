@@ -52,6 +52,30 @@ type sourceInventory struct {
 
 var detectUSBCamerasWithConfigAndProgress = recording.DetectCamerasWithConfigAndProgressFiltered
 
+// hiddenIntegratedCameras holds the built-in cameras that includeAll=false hid at
+// the last full scan. Cached rebuilds do not see these cameras, so their stored
+// assignments would otherwise be listed as stale sources.
+var hiddenIntegratedCameras []recording.DetectedCamera
+
+// includeIntegratedCameras reports whether built-in cameras are listed.
+// --simulate always hides them without changing the saved includeAll setting.
+func includeIntegratedCameras() bool {
+	return camerasConfig != nil && camerasConfig.Cameras.IncludeAll && !config.NoVideo
+}
+
+func integratedCamerasHiddenByConfig(cameras []recording.DetectedCamera) []recording.DetectedCamera {
+	if camerasConfig == nil || includeIntegratedCameras() {
+		return nil
+	}
+	var hidden []recording.DetectedCamera
+	for _, cam := range cameras {
+		if isIntegratedCamera(cam) {
+			hidden = append(hidden, cam)
+		}
+	}
+	return hidden
+}
+
 func currentStartPort() int {
 	if camerasConfig != nil && camerasConfig.Unicast.Enabled {
 		return camerasConfig.Unicast.StartPort
@@ -78,7 +102,7 @@ func buildSourceInventoryWithProgress(progress func(string)) sourceInventory {
 	if progress != nil {
 		progress(recording.ProgressMsg(recording.ProgCheckingLocal, ""))
 	}
-	usbSpecs, usbConfigChanged := buildUSBSourcesUnlessSimulated(startPort, usedPorts, usedShortIDs, progress)
+	usbSpecs, usbConfigChanged := buildUSBSourcesWithProgress(startPort, usedPorts, usedShortIDs, progress)
 	logging.InfoLogger.Printf("Source inventory USB phase completed in %s with %d source(s)", time.Since(usbStart), len(usbSpecs))
 	encoderStart := time.Now()
 	if progress != nil {
@@ -102,19 +126,8 @@ func buildCachedSourceInventory(previous sourceInventory, encoder *recording.HwE
 	usedShortIDs := make(map[string]struct{})
 
 	rtspSpecs := buildRTSPSources(startPort, usedPorts, usedShortIDs)
-	var usbSpecs []sourceSpec
-	if !config.NoVideo {
-		usbSpecs = buildUSBSourcesFromDetected(cachedDetectedCameras(previous.USB), startPort, usedPorts, usedShortIDs, nil)
-	}
+	usbSpecs := buildUSBSourcesFromDetected(cachedDetectedCameras(previous.USB), startPort, usedPorts, usedShortIDs, nil)
 	return assembleSourceInventory(usbSpecs, rtspSpecs, encoder)
-}
-
-// buildUSBSourcesUnlessSimulated reports no local sources in --simulate mode.
-func buildUSBSourcesUnlessSimulated(startPort int, usedPorts map[int]struct{}, usedShortIDs map[string]struct{}, progress func(string)) ([]sourceSpec, bool) {
-	if config.NoVideo {
-		return nil, false
-	}
-	return buildUSBSourcesWithProgress(startPort, usedPorts, usedShortIDs, progress)
 }
 
 func assembleSourceInventory(usbSpecs, rtspSpecs []sourceSpec, encoder *recording.HwEncoder) sourceInventory {
@@ -176,6 +189,7 @@ func assembleSourceInventory(usbSpecs, rtspSpecs []sourceSpec, encoder *recordin
 
 func buildUSBSourcesWithProgress(startPort int, usedPorts map[int]struct{}, usedShortIDs map[string]struct{}, progress func(string)) ([]sourceSpec, bool) {
 	cameras := detectUSBCamerasWithConfigAndProgress(ffmpegConfig, progress, nil)
+	hiddenIntegratedCameras = integratedCamerasHiddenByConfig(cameras)
 	sources := buildUSBSourcesFromDetected(cameras, startPort, usedPorts, usedShortIDs, progress)
 	changed := disableAbsentUSBAssignments(sources)
 	if syncDetectedUSBAssignments(sources) {
@@ -256,7 +270,7 @@ func buildUSBSourcesFromDetected(cameras []recording.DetectedCamera, startPort i
 
 	var filtered []recording.DetectedCamera
 	for _, cam := range cameras {
-		if !camerasConfig.Cameras.IncludeAll && isIntegratedCamera(cam) {
+		if !includeIntegratedCameras() && isIntegratedCamera(cam) {
 			if progress != nil {
 				progress(recording.ProgressMsg(recording.ProgSkippedSource, cam.Name))
 			}
@@ -357,6 +371,14 @@ func buildUSBSourcesFromDetected(cameras []recording.DetectedCamera, startPort i
 		})
 		if progress != nil {
 			progress(recording.ProgressMsg(recording.ProgDetectedSource, name))
+		}
+	}
+
+	if !includeIntegratedCameras() {
+		for _, cam := range hiddenIntegratedCameras {
+			if assignment := matchingDeviceAssignment(cam, assignmentsByAttachment, assignmentsByMatchKey); assignment != nil {
+				matchedAssignments[assignment] = struct{}{}
+			}
 		}
 	}
 

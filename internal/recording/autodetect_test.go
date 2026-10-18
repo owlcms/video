@@ -238,3 +238,29 @@ func TestWriteAutoConfigUsesAVFoundationInputSyntax(t *testing.T) {
 		t.Fatalf("generated config used V4L2 syntax:\n%s", generated)
 	}
 }
+
+func TestLookupAVFoundationMetadataMatchesFFmpegNameSuffixes(t *testing.T) {
+	metadata := map[string]avFoundationDeviceMetadata{
+		"uid:6c707041-05ac-0011-0003-000000000001": {transportType: "bltn"},
+		"macbook air camera":                       {transportType: "bltn"},
+		"logitech webcam c930e":                    {transportType: "usb "},
+	}
+
+	tests := []struct {
+		name      string
+		want      string
+		wantFound bool
+	}{
+		{name: "MacBook Air Camera  [uid:6C707041-05AC-0011-0003-000000000001]", want: "bltn", wantFound: true},
+		{name: "Logitech Webcam C930e  [uid:0x1142400046d0843] [serial:078E2D2E]", want: "usb ", wantFound: true},
+		{name: "Logitech Webcam C930e", want: "usb ", wantFound: true},
+		{name: "JFL Camera  [uid:1E3F08BF-48E4-465F-9307-3ECB00000001]", wantFound: false},
+	}
+
+	for _, tc := range tests {
+		got, found := lookupAVFoundationMetadata(metadata, tc.name)
+		if found != tc.wantFound || got.transportType != tc.want {
+			t.Errorf("lookupAVFoundationMetadata(%q) = (%q, %t), want (%q, %t)", tc.name, got.transportType, found, tc.want, tc.wantFound)
+		}
+	}
+}

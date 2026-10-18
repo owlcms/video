@@ -44,7 +44,7 @@ func main() {
 	disableReplays := flag.Bool("no-replays", false, "force the Replays module hidden for this launch")
 	includeAll := flag.Bool("all", false, "include all camera sources, including raw formats (typically integrated cameras)")
 	startPort := flag.Int("startport", 0, "starting port for multicast allocation (overrides cameras.toml)")
-	simulate := flag.Bool("simulate", false, "simulate captures: Cameras skips local camera detection and does not start streams; Replays creates empty replay files instead of recording")
+	simulate := flag.Bool("simulate", false, "simulate captures: Cameras hides built-in cameras and does not start streams; Replays creates empty replay files instead of recording")
 	flag.Parse()
 	config.SetNoVideo(*simulate)
 
