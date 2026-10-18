@@ -202,7 +202,9 @@ func StartRecording(fullName, liftTypeKey string, attemptNumber int) error {
 		if config.NoVideo {
 			cmd := CreateFfmpegCmd(args, "recording")
 			logging.InfoLogger.Printf("Simulating start recording video for Camera %d: %s", i+1, cmd.String())
-			logging.InfoLogger.Printf("ffmpeg command for Camera %d: %s", i+1, cmd.String())
+			if err := os.WriteFile(fileName, nil, 0o644); err != nil {
+				return fmt.Errorf("failed to create simulated recording for Camera %d: %w", i+1, err)
+			}
 			fileNames = append(fileNames, fileName)
 			state.LastTimerStopTime = 0
 			continue
@@ -261,19 +263,30 @@ func trimVideo(wg *sync.WaitGroup, i int, currentFileName string, keepFromEndMs 
 
 	logging.InfoLogger.Printf("Trimming video for Camera %d: %s", cameraNumber, attemptInfo)
 
+	if config.NoVideo {
+		logging.InfoLogger.Printf("Simulating trim for Camera %d: %s -> %s", cameraNumber, currentFileName, finalFileName)
+		if err := os.WriteFile(finalFileName, nil, 0o644); err != nil {
+			logging.ErrorLogger.Printf("Failed to create simulated replay for Camera %d at %s: %v", cameraNumber, finalFileName, err)
+			return
+		}
+		if err := os.Remove(currentFileName); err != nil {
+			logging.ErrorLogger.Printf("Failed to remove simulated recording for Camera %d: %v", cameraNumber, err)
+		}
+		if err := httpServer.PublishReplayState(cameraNumber, sessionDir, filepath.Base(finalFileName), 0); err != nil {
+			logging.ErrorLogger.Printf("Failed to publish replay state for Camera %d: %v", cameraNumber, err)
+		}
+		return
+	}
+
 	var err error
 	if startTime == 0 {
 		logging.InfoLogger.Printf("Start time is 0, not trimming the video for Camera %d", cameraNumber)
-		if config.NoVideo {
-			logging.InfoLogger.Printf("Simulating rename video for Camera %d: %s -> %s", cameraNumber, currentFileName, finalFileName)
-		} else if err = os.Rename(currentFileName, finalFileName); err != nil {
+		if err = os.Rename(currentFileName, finalFileName); err != nil {
 			logging.ErrorLogger.Printf("Failed to rename video file for Camera %d to %s: %v", cameraNumber, finalFileName, err)
 			return
 		}
-		if !config.NoVideo {
-			if err := httpServer.PublishReplayState(cameraNumber, sessionDir, filepath.Base(finalFileName), 0); err != nil {
-				logging.ErrorLogger.Printf("Failed to publish replay state for Camera %d: %v", cameraNumber, err)
-			}
+		if err := httpServer.PublishReplayState(cameraNumber, sessionDir, filepath.Base(finalFileName), 0); err != nil {
+			logging.ErrorLogger.Printf("Failed to publish replay state for Camera %d: %v", cameraNumber, err)
 		}
 	} else {
 		for j := 0; j < 5; j++ {

@@ -78,7 +78,7 @@ func buildSourceInventoryWithProgress(progress func(string)) sourceInventory {
 	if progress != nil {
 		progress(recording.ProgressMsg(recording.ProgCheckingLocal, ""))
 	}
-	usbSpecs, usbConfigChanged := buildUSBSourcesWithProgress(startPort, usedPorts, usedShortIDs, progress)
+	usbSpecs, usbConfigChanged := buildUSBSourcesUnlessSimulated(startPort, usedPorts, usedShortIDs, progress)
 	logging.InfoLogger.Printf("Source inventory USB phase completed in %s with %d source(s)", time.Since(usbStart), len(usbSpecs))
 	encoderStart := time.Now()
 	if progress != nil {
@@ -102,8 +102,19 @@ func buildCachedSourceInventory(previous sourceInventory, encoder *recording.HwE
 	usedShortIDs := make(map[string]struct{})
 
 	rtspSpecs := buildRTSPSources(startPort, usedPorts, usedShortIDs)
-	usbSpecs := buildUSBSourcesFromDetected(cachedDetectedCameras(previous.USB), startPort, usedPorts, usedShortIDs, nil)
+	var usbSpecs []sourceSpec
+	if !config.NoVideo {
+		usbSpecs = buildUSBSourcesFromDetected(cachedDetectedCameras(previous.USB), startPort, usedPorts, usedShortIDs, nil)
+	}
 	return assembleSourceInventory(usbSpecs, rtspSpecs, encoder)
+}
+
+// buildUSBSourcesUnlessSimulated reports no local sources in --simulate mode.
+func buildUSBSourcesUnlessSimulated(startPort int, usedPorts map[int]struct{}, usedShortIDs map[string]struct{}, progress func(string)) ([]sourceSpec, bool) {
+	if config.NoVideo {
+		return nil, false
+	}
+	return buildUSBSourcesWithProgress(startPort, usedPorts, usedShortIDs, progress)
 }
 
 func assembleSourceInventory(usbSpecs, rtspSpecs []sourceSpec, encoder *recording.HwEncoder) sourceInventory {

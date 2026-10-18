@@ -4370,7 +4370,7 @@ func BuildUI(window fyne.Window) *UI {
 		currentEncoder = newEncoder
 		updateEncoderStatus()
 		var unicastWarning string
-		if len(inv.Errors) == 0 && len(inv.Active) > 0 {
+		if len(inv.Errors) == 0 && len(inv.Active) > 0 && !config.NoVideo {
 			newStreams, unicastWarning = startAllStreams(inv.Active, newEncoder, &streamStartupCallbacks{action: actionStatus.SetText})
 		}
 		syncBroadcastUIFromConfig(true)
@@ -4501,7 +4501,7 @@ func BuildUI(window fyne.Window) *UI {
 
 			var newStreams []*cameraStream
 			var startupUnicastWarning string
-			if len(inv.Active) > 0 && len(inv.Errors) == 0 {
+			if len(inv.Active) > 0 && len(inv.Errors) == 0 && !config.NoVideo {
 				reportStartupProgress(recording.ProgressMsg(recording.ProgInventoryReady, fmt.Sprintf("Validating %d stream(s)...", len(inv.Active))))
 				newStreams, startupUnicastWarning = startAllStreams(inv.Active, inv.Encoder, &streamStartupCallbacks{
 					progress: reportStartupProgress,
@@ -4523,7 +4523,7 @@ func BuildUI(window fyne.Window) *UI {
 				if len(inv.Active) > 0 && len(inv.Errors) == 0 {
 					syncBroadcastUIFromConfig(true)
 					*currentStreams = newStreams
-					if len(newStreams) > 0 {
+					if len(newStreams) > 0 || config.NoVideo {
 						updateCameraStatusLabel(inv.Status)
 					} else {
 						updateCameraStatusLabel("No streams started successfully. Check logs for errors.")

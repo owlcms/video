@@ -159,7 +159,10 @@ func startStartupScans(ctx context.Context, cfg *replayscfg.Config, statusLabel,
 						return
 					}
 				}
-				missing := runFakeReplayProbe(ctx, cfg.Cameras)
+				var missing []string
+				if !config.NoVideo {
+					missing = runFakeReplayProbe(ctx, cfg.Cameras)
+				}
 				if ctx.Err() != nil {
 					return
 				}

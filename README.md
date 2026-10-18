@@ -50,6 +50,7 @@ Run with `--extractConfig` to create the files with their default contents.
 --no-replays        force the Replays module hidden for this launch
 --all               include every camera source, including raw formats
 --startport <n>     first port used for multicast allocation
+--simulate          simulate captures: Cameras skips local camera detection and does not start streams; Replays writes empty replay files instead of recording
 ```
 
 These switches temporarily override the module selection saved by the **Modules** menu; they do not change it. Changes made from the **Modules** menu are saved for future launches.
