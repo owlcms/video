@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -3100,7 +3101,8 @@ func BuildUI(window fyne.Window) *UI {
 				return "", err
 			}
 			if warning != "" {
-				syncBroadcastUIFromConfig(false)
+				// The RTSP watchdog calls this from its ticker goroutine.
+				fyne.Do(func() { syncBroadcastUIFromConfig(false) })
 			}
 			udpDest = camerasConfig.Unicast.TeeOutput(port)
 		} else {
@@ -3522,8 +3524,11 @@ func BuildUI(window fyne.Window) *UI {
 				state.nextRetry = time.Time{}
 				state.exhausted = true
 				logging.ErrorLogger.Printf("RTSP WATCHDOG STOPPED: source=%s port=%d url=%s reason=%s retries=%d", item.Name, item.OutputPort, item.Camera.Device, reason, state.attempts)
-				actionStatus.SetText(fmt.Sprintf("Stopped RTSP source %s after %d retries", item.Name, state.attempts))
-				updateCameraStatusLabel(currentInventory.Status)
+				message := fmt.Sprintf("Stopped RTSP source %s after %d retries", item.Name, state.attempts)
+				fyne.Do(func() {
+					actionStatus.SetText(message)
+					updateCameraStatusLabel(currentInventory.Status)
+				})
 				continue
 			}
 
@@ -3532,8 +3537,11 @@ func BuildUI(window fyne.Window) *UI {
 			state.nextRetry = now.Add(delay)
 			state.exhausted = false
 			logging.ErrorLogger.Printf("RTSP WATCHDOG TIMEOUT: source=%s port=%d url=%s reason=%s retry=%d backoff=%s next_retry_at=%s", item.Name, item.OutputPort, item.Camera.Device, reason, retryNumber, delay, state.nextRetry.Format(time.RFC3339))
-			actionStatus.SetText(fmt.Sprintf("RTSP source %s stopped; retry %d in %s", item.Name, retryNumber, delay))
-			updateCameraStatusLabel(currentInventory.Status)
+			message := fmt.Sprintf("RTSP source %s stopped; retry %d in %s", item.Name, retryNumber, delay)
+			fyne.Do(func() {
+				actionStatus.SetText(message)
+				updateCameraStatusLabel(currentInventory.Status)
+			})
 		}
 
 		for _, spec := range currentInventory.RTSP {
@@ -3569,7 +3577,8 @@ func BuildUI(window fyne.Window) *UI {
 				continue
 			}
 			if warning != "" {
-				actionStatus.SetText(fmt.Sprintf("Restarted %s. %s", spec.Name, warning))
+				message := fmt.Sprintf("Restarted %s. %s", spec.Name, warning)
+				fyne.Do(func() { actionStatus.SetText(message) })
 			}
 			logging.InfoLogger.Printf("RTSP WATCHDOG RETRY STARTED: source=%s port=%d retry=%d", spec.Name, spec.OutputPort, state.attempts)
 		}
@@ -4578,11 +4587,11 @@ func BuildUI(window fyne.Window) *UI {
 		}()
 	}
 
-	stopped := false
+	var stopped atomic.Bool
 	stopOnce := sync.Once{}
 	closeFn := func() {
 		stopOnce.Do(func() {
-			stopped = true
+			stopped.Store(true)
 			stopAll()
 		})
 	}
@@ -4590,11 +4599,16 @@ func BuildUI(window fyne.Window) *UI {
 	ticker := time.NewTicker(1 * time.Second)
 	go func() {
 		for range ticker.C {
-			if stopped {
+			if stopped.Load() {
 				return
 			}
 			autoRecoverRTSPStreams()
-			fyne.Do(table.Refresh)
+			// After Fyne shuts down, fyne.Do runs the function on this goroutine.
+			fyne.Do(func() {
+				if !stopped.Load() {
+					table.Refresh()
+				}
+			})
 		}
 	}()
 

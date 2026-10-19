@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"fyne.io/fyne/v2"
@@ -160,10 +161,16 @@ func main() {
 		saveModuleSelection(myApp.Preferences(), selection)
 	})
 
+	var shutdownOnce sync.Once
+	shutdownModules := func() {
+		shutdownOnce.Do(func() {
+			camerasUI.Stop()
+			replays.Shutdown()
+		})
+	}
 	quit := func() {
 		window.SetCloseIntercept(nil)
-		camerasUI.Stop()
-		replays.Shutdown()
+		shutdownModules()
 		myApp.Quit()
 	}
 	requestQuit := func() {
@@ -201,6 +208,9 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
+		// Fyne also handles this signal and may quit first, dropping queued
+		// fyne.Do calls, so the modules are stopped here directly.
+		shutdownModules()
 		fyne.Do(quit)
 	}()
 
@@ -218,6 +228,7 @@ func main() {
 	}
 	myApp.Run()
 
+	shutdownModules()
 	cameras.Cleanup()
 }
 
