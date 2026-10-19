@@ -1,5 +1,15 @@
 **Change log**
 
+- 3.0.2: Camera detection and Replays camera selection UI improvements
+  - On macOS, built-in cameras are now correctly hidden unless **Cameras > Include Internal Cameras** (`includeAll`) is on.
+  - **Replays > Select Cameras** offers every enabled camera.
+  - The Configuration tab shows the detected sources as soon as the scan finishes
+  - Detected Sources lists the Name column first, and shows "No Sources Detected" when there are none.
+  - The Configuration tab layout is updated when a rescan adds or removes sources. The RTSP Sources section could previously overlap the detected sources.
+  - The Monitoring tab shows camera names without the `[uid:...]` suffix.
+  - The startup check of the camera streams is now called the "replay sampling test" in messages and logs.
+  - New `--simulate` option for demonstrations without working cameras: built-in cameras are hidden, no streams are started, and each lift creates empty replay files that appear in the replay list like real ones.
+
 - 3.0.1: macOS changes for camera permissions when running without a terminal
 
 - 3.0.0: First release of OWLCMS Video, the successor to the separate Cameras and Replays programs.

@@ -2638,6 +2638,18 @@ func BuildUI(window fyne.Window) *UI {
 
 	usbRowsContainer := container.NewVBox()
 	rtspRowsContainer := container.NewVBox()
+	// Refreshing a rows container does not re-lay out its parents, so the
+	// Configuration content and its scroll area are refreshed when rows change.
+	var configurationContent *fyne.Container
+	var configurationTab *container.Scroll
+	relayoutConfiguration := func() {
+		if configurationContent != nil {
+			configurationContent.Refresh()
+		}
+		if configurationTab != nil {
+			configurationTab.Refresh()
+		}
+	}
 	var usbRows []*usbSourceRow
 	var rtspRows []*rtspSourceRow
 	var table *widget.Table
@@ -2688,6 +2700,7 @@ func BuildUI(window fyne.Window) *UI {
 		if len(usbRows) == 0 {
 			usbRowsContainer.Objects = []fyne.CanvasObject{widget.NewLabel("No Sources Detected")}
 			usbRowsContainer.Refresh()
+			relayoutConfiguration()
 			return
 		}
 		objects := []fyne.CanvasObject{
@@ -2823,6 +2836,7 @@ func BuildUI(window fyne.Window) *UI {
 		}
 		usbRowsContainer.Objects = objects
 		usbRowsContainer.Refresh()
+		relayoutConfiguration()
 	}
 
 	var renderRTSPRows func()
@@ -2981,6 +2995,7 @@ func BuildUI(window fyne.Window) *UI {
 		}
 		rtspRowsContainer.Objects = objects
 		rtspRowsContainer.Refresh()
+		relayoutConfiguration()
 	}
 
 	sortedSpecsByPort := func(specs []sourceSpec) []sourceSpec {
@@ -4670,19 +4685,18 @@ func BuildUI(window fyne.Window) *UI {
 		restartStreams()
 	})
 	restartFromConfigBtn.Importance = widget.HighImportance
-	configurationTab := container.NewScroll(
-		container.NewPadded(container.NewVBox(
-			newVerticalGap(4),
-			container.NewHBox(rescanBtn, restartFromConfigBtn),
-			newVerticalGap(8),
-			topConfigSections,
-			newVerticalGap(12),
-			usbSection,
-			newVerticalGap(12),
-			rtspSection,
-			newVerticalGap(8),
-		)),
+	configurationContent = container.NewVBox(
+		newVerticalGap(4),
+		container.NewHBox(rescanBtn, restartFromConfigBtn),
+		newVerticalGap(8),
+		topConfigSections,
+		newVerticalGap(12),
+		usbSection,
+		newVerticalGap(12),
+		rtspSection,
+		newVerticalGap(8),
 	)
+	configurationTab = container.NewScroll(container.NewPadded(configurationContent))
 	configurationTab.SetMinSize(fyne.NewSize(0, 420))
 
 	var includeInternalCamerasItem *fyne.MenuItem
