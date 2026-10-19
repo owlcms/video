@@ -49,30 +49,26 @@ func TestRTSPRetryDelay(t *testing.T) {
 	}
 }
 
-func TestRTSPRetryWindow(t *testing.T) {
+func TestRTSPRetryBackoff(t *testing.T) {
 	tests := []struct {
-		name           string
 		retriesStarted int
-		wantDelay      time.Duration
-		wantRetry      bool
+		want           time.Duration
 	}{
-		{name: "first retry uses 2 seconds", retriesStarted: 0, wantDelay: 2 * time.Second, wantRetry: true},
-		{name: "second retry uses 4 seconds", retriesStarted: 1, wantDelay: 4 * time.Second, wantRetry: true},
-		{name: "third retry uses 8 seconds", retriesStarted: 2, wantDelay: 8 * time.Second, wantRetry: true},
-		{name: "fourth retry is blocked", retriesStarted: 3, wantDelay: 0, wantRetry: false},
+		{retriesStarted: -1, want: 1 * time.Second},
+		{retriesStarted: 0, want: 1 * time.Second},
+		{retriesStarted: 9, want: 1 * time.Second},
+		{retriesStarted: 10, want: 2 * time.Second},
+		{retriesStarted: 19, want: 2 * time.Second},
+		{retriesStarted: 20, want: 4 * time.Second},
+		{retriesStarted: 30, want: 8 * time.Second},
+		{retriesStarted: 40, want: 16 * time.Second},
+		{retriesStarted: 1000, want: 16 * time.Second},
 	}
 
-	for i := range tests {
-		tc := &tests[i]
-		t.Run(tc.name, func(t *testing.T) {
-			gotDelay, gotRetry := rtspRetryWindow(tc.retriesStarted)
-			if gotRetry != tc.wantRetry {
-				t.Fatalf("rtspRetryWindow(%d) retry = %t, want %t", tc.retriesStarted, gotRetry, tc.wantRetry)
-			}
-			if gotDelay != tc.wantDelay {
-				t.Fatalf("rtspRetryWindow(%d) delay = %s, want %s", tc.retriesStarted, gotDelay, tc.wantDelay)
-			}
-		})
+	for _, tc := range tests {
+		if got := rtspRetryBackoff(tc.retriesStarted); got != tc.want {
+			t.Errorf("rtspRetryBackoff(%d) = %s, want %s", tc.retriesStarted, got, tc.want)
+		}
 	}
 }
 
@@ -719,8 +715,8 @@ func TestUnreadyRTSPStatusUsesStartingLabel(t *testing.T) {
 	}
 
 	uiStatus := monitoringSourceStatus(spec, stream, recovery)
-	if uiStatus != "starting (1/3)" {
-		t.Fatalf("faulted UI status = %q, want starting (1/3)", uiStatus)
+	if uiStatus != "starting (attempt 1)" {
+		t.Fatalf("faulted UI status = %q, want starting (attempt 1)", uiStatus)
 	}
 }
 
@@ -729,8 +725,8 @@ func TestExitedRTSPStatusUsesStartingLabelWhileRetryPending(t *testing.T) {
 	spec := sourceSpec{SourceType: "rtsp"}
 	recovery := &rtspRecoveryState{attention: true, reason: "ffmpeg exited"}
 
-	if got := monitoringSourceStatus(spec, stream, recovery); got != "starting (1/3)" {
-		t.Fatalf("monitoringSourceStatus() = %q, want starting (1/3)", got)
+	if got := monitoringSourceStatus(spec, stream, recovery); got != "starting (attempt 1)" {
+		t.Fatalf("monitoringSourceStatus() = %q, want starting (attempt 1)", got)
 	}
 }
 
@@ -738,8 +734,8 @@ func TestRetryBackoffRTSPStatusUsesStartingLabel(t *testing.T) {
 	spec := sourceSpec{SourceType: "rtsp"}
 	recovery := &rtspRecoveryState{attempts: 1, attention: true, nextRetry: time.Now().Add(4 * time.Second)}
 
-	if got := monitoringSourceStatus(spec, nil, recovery); got != "starting (2/3)" {
-		t.Fatalf("monitoringSourceStatus() = %q, want starting (2/3)", got)
+	if got := monitoringSourceStatus(spec, nil, recovery); got != "starting (attempt 2)" {
+		t.Fatalf("monitoringSourceStatus() = %q, want starting (attempt 2)", got)
 	}
 }
 

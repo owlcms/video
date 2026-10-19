@@ -338,10 +338,7 @@ type rtspRecoveryState struct {
 	attention bool
 	reason    string
 	nextRetry time.Time
-	exhausted bool
 }
-
-const maxRTSPRetryAttempts = 3
 
 func ComputeMetrics(prev, curr Progress) Metrics {
 	deltaFrame := curr.Frame - prev.Frame
@@ -1620,11 +1617,20 @@ func rtspRetryDelay(attempt int) time.Duration {
 	}
 }
 
-func rtspRetryWindow(retriesStarted int) (time.Duration, bool) {
-	if retriesStarted < 0 || retriesStarted >= maxRTSPRetryAttempts {
-		return 0, false
+// rtspRetryBackoff returns the wait before the next retry of an enabled RTSP
+// source: 10 retries 1s apart, then 10 each at 2s, 4s and 8s, then every 16s.
+// Retries continue until the source comes back or is stopped or disabled.
+func rtspRetryBackoff(retriesStarted int) time.Duration {
+	const retriesPerStep = 10
+	const maxBackoff = 16 * time.Second
+	if retriesStarted < 0 {
+		retriesStarted = 0
 	}
-	return rtspRetryDelay(retriesStarted), true
+	backoff := time.Second << (retriesStarted / retriesPerStep)
+	if backoff > maxBackoff || backoff <= 0 {
+		return maxBackoff
+	}
+	return backoff
 }
 
 func (s *cameraStream) autoRestartReason(now time.Time, startupDelay time.Duration) (string, bool) {
@@ -1949,16 +1955,10 @@ func monitoringSourceNeedsRestart(spec sourceSpec, stream *cameraStream, now tim
 
 func rtspStartingAttemptLabel(recovery *rtspRecoveryState) string {
 	attempt := 1
-	if recovery != nil {
+	if recovery != nil && recovery.attempts > 0 {
 		attempt += recovery.attempts
 	}
-	if attempt < 1 {
-		attempt = 1
-	}
-	if attempt > maxRTSPRetryAttempts {
-		attempt = maxRTSPRetryAttempts
-	}
-	return fmt.Sprintf("starting (%d/%d)", attempt, maxRTSPRetryAttempts)
+	return fmt.Sprintf("starting (attempt %d)", attempt)
 }
 
 func monitoringSourceStatus(spec sourceSpec, stream *cameraStream, recovery *rtspRecoveryState) string {
@@ -1968,7 +1968,7 @@ func monitoringSourceStatus(spec sourceSpec, stream *cameraStream, recovery *rts
 		}
 	}
 
-	if strings.EqualFold(spec.SourceType, "rtsp") && recovery != nil && !recovery.exhausted {
+	if strings.EqualFold(spec.SourceType, "rtsp") && recovery != nil {
 		if stream == nil {
 			if recovery.attention || !recovery.nextRetry.IsZero() {
 				return rtspStartingAttemptLabel(recovery)
@@ -1990,7 +1990,7 @@ func monitoringSourceStatus(spec sourceSpec, stream *cameraStream, recovery *rts
 
 	normalized := strings.ToLower(strings.TrimSpace(status))
 	if strings.HasPrefix(normalized, "stopped") || strings.HasPrefix(normalized, "failed") {
-		if recovery != nil && !recovery.exhausted {
+		if recovery != nil {
 			return rtspStartingAttemptLabel(recovery)
 		}
 		return "stopped"
@@ -3142,7 +3142,6 @@ func BuildUI(window fyne.Window) *UI {
 				state.attempts = 0
 			}
 			state.nextRetry = time.Time{}
-			state.exhausted = false
 		} else {
 			resetRTSPRecovery(spec.Key)
 		}
@@ -3483,10 +3482,9 @@ func BuildUI(window fyne.Window) *UI {
 			state.attention = false
 			state.reason = ""
 			state.nextRetry = time.Time{}
-			state.exhausted = false
 			return "", false
 		}
-		if state.nextRetry.After(now) || state.exhausted {
+		if state.nextRetry.After(now) {
 			return "", false
 		}
 
@@ -3519,23 +3517,10 @@ func BuildUI(window fyne.Window) *UI {
 				logging.ErrorLogger.Printf("RTSP WATCHDOG STOP FAILED: source=%s port=%d error=%v", item.Name, item.OutputPort, err)
 			}
 
-			delay, retryAllowed := rtspRetryWindow(state.attempts)
-			if !retryAllowed {
-				state.nextRetry = time.Time{}
-				state.exhausted = true
-				logging.ErrorLogger.Printf("RTSP WATCHDOG STOPPED: source=%s port=%d url=%s reason=%s retries=%d", item.Name, item.OutputPort, item.Camera.Device, reason, state.attempts)
-				message := fmt.Sprintf("Stopped RTSP source %s after %d retries", item.Name, state.attempts)
-				fyne.Do(func() {
-					actionStatus.SetText(message)
-					updateCameraStatusLabel(currentInventory.Status)
-				})
-				continue
-			}
-
+			delay := rtspRetryBackoff(state.attempts)
 			retryNumber := state.attempts + 1
 			state.attempts = retryNumber
 			state.nextRetry = now.Add(delay)
-			state.exhausted = false
 			logging.ErrorLogger.Printf("RTSP WATCHDOG TIMEOUT: source=%s port=%d url=%s reason=%s retry=%d backoff=%s next_retry_at=%s", item.Name, item.OutputPort, item.Camera.Device, reason, retryNumber, delay, state.nextRetry.Format(time.RFC3339))
 			message := fmt.Sprintf("RTSP source %s stopped; retry %d in %s", item.Name, retryNumber, delay)
 			fyne.Do(func() {
@@ -3549,7 +3534,7 @@ func BuildUI(window fyne.Window) *UI {
 			if !ok || state == nil {
 				continue
 			}
-			if state.exhausted || state.nextRetry.IsZero() || now.Before(state.nextRetry) {
+			if state.nextRetry.IsZero() || now.Before(state.nextRetry) {
 				continue
 			}
 			if !spec.Enabled || !spec.MonitoringOn || spec.OutputPort <= 0 {
@@ -3566,14 +3551,10 @@ func BuildUI(window fyne.Window) *UI {
 			warning, err := startSingleSource(spec, false)
 			if err != nil {
 				state.reason = fmt.Sprintf("restart failed: %v", err)
-				if delay, retryAllowed := rtspRetryWindow(state.attempts); retryAllowed {
-					state.attempts++
-					state.nextRetry = now.Add(delay)
-					logging.ErrorLogger.Printf("RTSP WATCHDOG RETRY FAILED: source=%s port=%d error=%v retry=%d backoff=%s", spec.Name, spec.OutputPort, err, state.attempts, delay)
-				} else {
-					state.exhausted = true
-					logging.ErrorLogger.Printf("RTSP WATCHDOG STOPPED: source=%s port=%d error=%v retries=%d", spec.Name, spec.OutputPort, err, state.attempts)
-				}
+				delay := rtspRetryBackoff(state.attempts)
+				state.attempts++
+				state.nextRetry = now.Add(delay)
+				logging.ErrorLogger.Printf("RTSP WATCHDOG RETRY FAILED: source=%s port=%d error=%v retry=%d backoff=%s", spec.Name, spec.OutputPort, err, state.attempts, delay)
 				continue
 			}
 			if warning != "" {

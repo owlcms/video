@@ -7,6 +7,7 @@
   - Detected Sources lists the Name column first, and shows "No Sources Detected" when there are none.
   - The Configuration tab layout is updated when a rescan adds or removes sources. The RTSP Sources section could previously overlap the detected sources.
   - Fixed "Error in Fyne call thread" warnings when an unreachable RTSP camera is retried in the background, and when the program is stopped with Ctrl-C or from the Control Panel. Camera streams and the Replays services are now always shut down in that case.
+  - An enabled RTSP camera that cannot be reached is retried until it comes back: 10 retries 1 second apart, then 10 each at 2, 4 and 8 seconds, then every 16 seconds. It previously gave up after 3 retries. This applies only to RTSP cameras; USB cameras are not retried.
   - The Monitoring tab shows camera names without the `[uid:...]` suffix.
   - The startup check of the camera streams is now called the "replay sampling test" in messages and logs.
   - New `--simulate` option for demonstrations without working cameras: built-in cameras are hidden, no streams are started, and each lift creates empty replay files that appear in the replay list like real ones.
