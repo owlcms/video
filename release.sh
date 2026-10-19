@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-TAG="${TAG:-${1:-3.0.1-beta01}}"
+TAG="${TAG:-${1:-3.0.2}}"
 set -euo pipefail
 
 # Triggers the GitHub Actions workflow `.github/workflows/release.yaml`
