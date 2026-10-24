@@ -3,6 +3,8 @@
 - 3.0.3: Unicast destination fixes
   - On Windows, the local `127.0.0.1` unicast destination was wrongly reported as unreachable and unchecked at startup. The local destination is no longer checked and always stays enabled, since it feeds local preview and Replays.
   - On Windows, a remote unicast destination whose machine is up is no longer disabled just because nothing listens on the TCP port used for the reachability check.
+  - **Replays > Use Streams from Cameras Server** now detects when the Cameras machine is not sending to the Replays machine. The Cameras machine's own `127.0.0.1` destination was mistaken for the Replays machine, so a missing destination was never reported. The message names the address to add on the Cameras machine, or says that it is present but unchecked. **Select Cameras** applies the same check when it fetches from the saved Cameras machine.
+  - The Cameras machine address defaults to port 8091 when none is given. The example address previously suggested port 8090, which is not used by Video.
 
 - 3.0.2: Camera detection and Replays camera selection UI improvements
   - On macOS, built-in cameras are now correctly hidden unless **Cameras > Include Internal Cameras** (`includeAll`) is on.

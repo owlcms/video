@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/owlcms/video/internal/config"
@@ -190,6 +191,82 @@ on = true
 	}
 }
 
+func TestCamerasConfigEndpointDefaultsToVideoHTTPPort(t *testing.T) {
+	tests := map[string]string{
+		"192.168.1.174":              "http://192.168.1.174:8091/api/cameras/config",
+		"http://192.168.1.174":       "http://192.168.1.174:8091/api/cameras/config",
+		"192.168.1.174:9000":         "http://192.168.1.174:9000/api/cameras/config",
+		"http://cameras.local:8091/": "http://cameras.local:8091/api/cameras/config",
+	}
+	for address, want := range tests {
+		got, err := camerasConfigEndpoint(address)
+		if err != nil {
+			t.Fatalf("camerasConfigEndpoint(%q): %v", address, err)
+		}
+		if got != want {
+			t.Fatalf("camerasConfigEndpoint(%q) = %q, want %q", address, got, want)
+		}
+	}
+}
+
+func remoteUnicastConfig(destinations ...camerascfg.UnicastDestination) *camerascfg.Config {
+	return &camerascfg.Config{
+		Unicast: camerascfg.UnicastConfig{Enabled: true, StartPort: 9001, Destinations: destinations},
+		DeviceAssignments: []camerascfg.DeviceAssignment{
+			{Name: "Camera 1", ShortID: "C1", OutputPort: 9001, On: boolPointer(true)},
+		},
+	}
+}
+
+func TestRemoteUnicastPreviewIgnoresCamerasMachineLoopback(t *testing.T) {
+	preview := buildCamerasImportPreview(remoteUnicastConfig(
+		camerascfg.UnicastDestination{Address: "127.0.0.1", Enabled: true},
+	), "remote", "192.0.2.10")
+
+	if preview.CompatibilityAllowed {
+		t.Fatal("expected the Cameras machine's own loopback destination not to designate this machine")
+	}
+	if !strings.Contains(preview.CompatibilityMessage, "(192.0.2.10) is not sending its streams to this machine") {
+		t.Fatalf("unexpected message: %q", preview.CompatibilityMessage)
+	}
+}
+
+func TestRemoteUnicastPreviewReportsUncheckedDestination(t *testing.T) {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		t.Skip("hostname unavailable")
+	}
+	preview := buildCamerasImportPreview(remoteUnicastConfig(
+		camerascfg.UnicastDestination{Address: "127.0.0.1", Enabled: true},
+		camerascfg.UnicastDestination{Address: hostname, Enabled: false},
+	), "remote", "192.0.2.10")
+
+	if preview.CompatibilityAllowed {
+		t.Fatal("expected an unchecked destination for this machine to be refused")
+	}
+	if !strings.Contains(preview.CompatibilityMessage, "but it is unchecked") || !strings.Contains(preview.CompatibilityMessage, hostname) {
+		t.Fatalf("unexpected message: %q", preview.CompatibilityMessage)
+	}
+}
+
+func TestRemoteUnicastPreviewAcceptsThisMachine(t *testing.T) {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		t.Skip("hostname unavailable")
+	}
+	preview := buildCamerasImportPreview(remoteUnicastConfig(
+		camerascfg.UnicastDestination{Address: "127.0.0.1", Enabled: true},
+		camerascfg.UnicastDestination{Address: hostname, Enabled: true},
+	), "remote", "192.0.2.10")
+
+	if !preview.CompatibilityAllowed {
+		t.Fatalf("expected this machine's destination to be accepted, got %q", preview.CompatibilityMessage)
+	}
+	if preview.CamerasAddressValue != hostname {
+		t.Fatalf("expected matched destination %q, got %q", hostname, preview.CamerasAddressValue)
+	}
+}
+
 func TestImportedMpegTSSettingsReplacePriorPorts(t *testing.T) {
 	preview := buildCamerasImportPreview(&camerascfg.Config{
 		Multicast: camerascfg.MulticastConfig{IP: "239.44.0.1"},
@@ -197,7 +274,7 @@ func TestImportedMpegTSSettingsReplacePriorPorts(t *testing.T) {
 			{Name: "Camera 2", ShortID: "C2", OutputPort: 9012, On: boolPointer(true)},
 			{Name: "Camera 1", ShortID: "C1", OutputPort: 9011, On: boolPointer(true)},
 		},
-	}, "remote")
+	}, "remote", "203.0.113.5")
 
 	settings, err := importedMpegTSSettings(config.MulticastSettings{
 		IP:          "239.255.0.1",
@@ -225,7 +302,7 @@ func TestSelectedCamerasFirstPreservesConfiguredReplayOrder(t *testing.T) {
 			{Name: "Camera 2", ShortID: "C2", OutputPort: 9012, On: boolPointer(true)},
 			{Name: "Camera 3", ShortID: "C3", OutputPort: 9013, On: boolPointer(true)},
 		},
-	}, "local")
+	}, "local", "")
 
 	selected, available := selectedCamerasFirst(preview, config.MulticastSettings{
 		Camera1Port: 9013,

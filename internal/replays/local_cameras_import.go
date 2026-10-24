@@ -19,6 +19,9 @@ import (
 
 const maxImportedCameraStreams = 4
 
+// defaultVideoHTTPPort matches the default port in replays.toml.
+const defaultVideoHTTPPort = 8091
+
 type localCamerasStream struct {
 	Name       string
 	ShortID    string
@@ -37,6 +40,7 @@ type localCamerasImportPreview struct {
 	ReplaysAddressValue  string
 	LocalAddresses       []string
 	EnabledDestinations  []string
+	DisabledDestinations []string
 	OrderedStreams       []localCamerasStream
 	ImportedStreams      []localCamerasStream
 	AdditionalStreams    []localCamerasStream
@@ -186,9 +190,24 @@ func localCaptureAddresses() []string {
 	return addresses
 }
 
-func matchLocalUnicastDestination(destinations []string, localAddresses []string) (string, bool) {
+func isLoopbackDestination(address string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(address), "[]")
+	if strings.EqualFold(trimmed, "localhost") {
+		return true
+	}
+	parsed := net.ParseIP(trimmed)
+	return parsed != nil && parsed.IsLoopback()
+}
+
+// matchLocalUnicastDestination finds a destination that designates this
+// machine. Loopback destinations only count when the Cameras configuration
+// belongs to this machine; on a remote Cameras machine they designate itself.
+func matchLocalUnicastDestination(destinations []string, localAddresses []string, acceptLoopback bool) (string, bool) {
 	localSet := make(map[string]struct{}, len(localAddresses))
 	for _, address := range localAddresses {
+		if isLoopbackDestination(address) {
+			continue
+		}
 		localSet[strings.ToLower(strings.TrimSpace(address))] = struct{}{}
 	}
 
@@ -197,8 +216,11 @@ func matchLocalUnicastDestination(destinations []string, localAddresses []string
 		if trimmed == "" {
 			continue
 		}
-		if parsed := net.ParseIP(trimmed); parsed != nil && parsed.IsLoopback() {
-			return trimmed, true
+		if isLoopbackDestination(trimmed) {
+			if acceptLoopback {
+				return trimmed, true
+			}
+			continue
 		}
 		if _, ok := localSet[strings.ToLower(trimmed)]; ok {
 			return trimmed, true
@@ -208,15 +230,32 @@ func matchLocalUnicastDestination(destinations []string, localAddresses []string
 	return "", false
 }
 
+// suggestedLocalDestinations lists the addresses a remote Cameras machine
+// could use to send its streams to this machine.
+func suggestedLocalDestinations(localAddresses []string) []string {
+	suggestions := make([]string, 0, len(localAddresses))
+	for _, address := range localAddresses {
+		parsed := net.ParseIP(strings.TrimSpace(address))
+		if parsed == nil || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() {
+			continue
+		}
+		suggestions = append(suggestions, parsed.String())
+	}
+	return suggestions
+}
+
 func loadLocalCamerasImportPreview(configPath string) (*localCamerasImportPreview, error) {
 	cfg, err := camerascfg.LoadConfigFromFile(configPath)
 	if err != nil {
 		return nil, err
 	}
-	return buildCamerasImportPreview(cfg, configPath), nil
+	return buildCamerasImportPreview(cfg, configPath, ""), nil
 }
 
-func buildCamerasImportPreview(cfg *camerascfg.Config, configPath string) *localCamerasImportPreview {
+// buildCamerasImportPreview describes how Replays can receive the Cameras
+// streams. remoteHost names the Cameras machine when the configuration was
+// fetched over HTTP, and is empty when Cameras runs on this machine.
+func buildCamerasImportPreview(cfg *camerascfg.Config, configPath string, remoteHost string) *localCamerasImportPreview {
 	if cfg == nil {
 		return nil
 	}
@@ -235,23 +274,26 @@ func buildCamerasImportPreview(cfg *camerascfg.Config, configPath string) *local
 		preview.CamerasAddressLabel = "Cameras unicast address"
 		preview.ReplaysAddressValue = preview.ListenIP
 		for _, destination := range cfg.Unicast.Destinations {
-			if !destination.Enabled {
-				continue
-			}
 			trimmed := strings.TrimSpace(destination.Address)
 			if trimmed == "" {
 				continue
 			}
-			preview.EnabledDestinations = append(preview.EnabledDestinations, trimmed)
+			if destination.Enabled {
+				preview.EnabledDestinations = append(preview.EnabledDestinations, trimmed)
+			} else {
+				preview.DisabledDestinations = append(preview.DisabledDestinations, trimmed)
+			}
 		}
 		sort.Strings(preview.EnabledDestinations)
-		if matched, ok := matchLocalUnicastDestination(preview.EnabledDestinations, preview.LocalAddresses); ok {
+		sort.Strings(preview.DisabledDestinations)
+		acceptLoopback := remoteHost == ""
+		if matched, ok := matchLocalUnicastDestination(preview.EnabledDestinations, preview.LocalAddresses, acceptLoopback); ok {
 			preview.CompatibilityAllowed = true
 			preview.CompatibilityMessage = "Cameras configuration allows capturing the replays."
 			preview.CamerasAddressValue = matched
 		} else {
 			preview.CompatibilityAllowed = false
-			preview.CompatibilityMessage = "Cameras configuration does not allow capturing the replays. Cameras is not unicasting to this machine."
+			preview.CompatibilityMessage = unicastNotReceivingMessage(preview, remoteHost, acceptLoopback)
 			if len(preview.EnabledDestinations) == 0 {
 				preview.CamerasAddressValue = "none"
 			} else {
@@ -283,6 +325,24 @@ func buildCamerasImportPreview(cfg *camerascfg.Config, configPath string) *local
 	return preview
 }
 
+func unicastNotReceivingMessage(preview *localCamerasImportPreview, remoteHost string, acceptLoopback bool) string {
+	if remoteHost == "" {
+		return "Cameras configuration does not allow capturing the replays. Cameras is not unicasting to this machine."
+	}
+	if unchecked, ok := matchLocalUnicastDestination(preview.DisabledDestinations, preview.LocalAddresses, acceptLoopback); ok {
+		return fmt.Sprintf("The Cameras machine (%s) lists this machine (%s) as a unicast destination, but it is unchecked. On the Cameras machine, check %s under Unicast destinations and click Restart.",
+			remoteHost, unchecked, unchecked)
+	}
+	destination := "this machine's IP address"
+	if suggestions := suggestedLocalDestinations(preview.LocalAddresses); len(suggestions) > 0 {
+		destination = strings.Join(suggestions, " or ")
+	}
+	return fmt.Sprintf("The Cameras machine (%s) is not sending its streams to this machine. On the Cameras machine, add %s under Unicast destinations, check it, and click Restart.",
+		remoteHost, destination)
+}
+
+// camerasConfigEndpoint builds the Cameras configuration URL; the Video HTTP
+// port is used when the address has no port.
 func camerasConfigEndpoint(serverAddress string) (string, error) {
 	address := strings.TrimSpace(serverAddress)
 	if address == "" {
@@ -295,6 +355,9 @@ func camerasConfigEndpoint(serverAddress string) (string, error) {
 	parsed, err := neturl.Parse(address)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("invalid Cameras server address %q", serverAddress)
+	}
+	if parsed.Port() == "" {
+		parsed.Host = net.JoinHostPort(parsed.Hostname(), strconv.Itoa(defaultVideoHTTPPort))
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/cameras/config"
 	parsed.RawQuery = ""
@@ -325,7 +388,11 @@ func loadRemoteCamerasImportPreview(serverAddress string) (*localCamerasImportPr
 	if err != nil {
 		return nil, fmt.Errorf("read cameras configuration from %s: %w", endpoint, err)
 	}
-	return buildCamerasImportPreview(cfg, endpoint), nil
+	remoteHost := endpoint
+	if parsed, err := neturl.Parse(endpoint); err == nil {
+		remoteHost = parsed.Hostname()
+	}
+	return buildCamerasImportPreview(cfg, endpoint, remoteHost), nil
 }
 
 func formatPreviewShortID(shortID string) string {

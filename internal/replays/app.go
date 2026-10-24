@@ -165,11 +165,11 @@ func showOwlCMSServerAddress(cfg *replayscfg.Config, window fyne.Window) {
 
 func showRemoteCamerasImportDialog(cfg *replayscfg.Config, window fyne.Window) {
 	serverAddress := widget.NewEntry()
-	serverAddress.SetPlaceHolder("http://video-cameras.local:8090")
+	serverAddress.SetPlaceHolder(fmt.Sprintf("192.168.1.10:%d", defaultVideoHTTPPort))
 	content := container.NewVBox(
-		widget.NewLabel("Cameras server address"),
+		widget.NewLabel("Cameras machine address"),
 		serverAddress,
-		widget.NewLabel("The server must expose /api/cameras/config and send its configured streams to this machine."),
+		widget.NewLabel(fmt.Sprintf("Port %d is used when no port is given.\nThe Cameras machine must send its streams to this machine.", defaultVideoHTTPPort)),
 	)
 
 	dialog.NewCustomConfirm("Use Streams from Cameras Server", "Fetch and Use", "Cancel", content,
@@ -226,6 +226,10 @@ func showSelectCamerasDialog(cfg *replayscfg.Config, window fyne.Window) {
 			}
 			if len(preview.OrderedStreams) == 0 {
 				dialog.ShowInformation("No Cameras", "The selected Cameras source has no enabled streams.", window)
+				return
+			}
+			if sourceServer != "" && !preview.CompatibilityAllowed {
+				dialog.ShowError(fmt.Errorf("load available Cameras: %s", preview.CompatibilityMessage), window)
 				return
 			}
 			showCameraSelectionDialog(cfg, preview, sourceServer, window)
