@@ -110,6 +110,21 @@ func TestApplyDefaultsAddsLoopbackUnicastDestination(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsReenablesDisabledLoopbackUnicastDestination(t *testing.T) {
+	cfg := &Config{
+		Unicast: UnicastConfig{
+			Enabled:      true,
+			Destinations: []UnicastDestination{{Address: "127.0.0.1", Enabled: false}},
+		},
+	}
+
+	cfg.applyDefaults()
+
+	if len(cfg.Unicast.Destinations) != 1 || !cfg.Unicast.Destinations[0].Enabled {
+		t.Fatalf("expected saved loopback destination to be re-enabled, got %#v", cfg.Unicast.Destinations)
+	}
+}
+
 func TestSerializeIncludesMonitoringOnFlag(t *testing.T) {
 	cfg := &Config{
 		Multicast: MulticastConfig{IP: "239.255.0.1", StartPort: 9001},

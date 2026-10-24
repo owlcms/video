@@ -586,8 +586,18 @@ func probeUnicastDestinationReachable(address string, port int) error {
 	return conn.Close()
 }
 
+// Winsock reports refused and reset connections with WSA codes that do not
+// match Go's invented syscall.ECONNREFUSED/ECONNRESET values on Windows.
+const (
+	wsaeConnRefused = syscall.Errno(10061)
+	wsaeConnReset   = syscall.Errno(10054)
+)
+
 func tcpDialErrorMeansReachable(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, wsaeConnRefused) ||
+		errors.Is(err, wsaeConnReset)
 }
 
 func disableUnreachableUnicastDestinations(cfg *camerascfg.Config, port int, checker func(string, int) error) ([]camerascfg.UnicastDestination, []unicastReachabilityIssue, bool) {
@@ -602,6 +612,14 @@ func disableUnreachableUnicastDestinations(cfg *camerascfg.Config, port int, che
 	changed := false
 	for index := range cfg.Unicast.Destinations {
 		destination := &cfg.Unicast.Destinations[index]
+		// The loopback leg feeds local preview and Replays and is always sent.
+		if camerascfg.NormalizeUnicastDestinationAddress(destination.Address) == camerascfg.PreviewLoopbackAddress {
+			if !destination.Enabled {
+				destination.Enabled = true
+				changed = true
+			}
+			continue
+		}
 		if !destination.Enabled {
 			continue
 		}

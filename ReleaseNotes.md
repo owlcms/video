@@ -1,5 +1,9 @@
 **Change log**
 
+- 3.0.3: Unicast destination fixes
+  - On Windows, the local `127.0.0.1` unicast destination was wrongly reported as unreachable and unchecked at startup. The local destination is no longer checked and always stays enabled, since it feeds local preview and Replays.
+  - On Windows, a remote unicast destination whose machine is up is no longer disabled just because nothing listens on the TCP port used for the reachability check.
+
 - 3.0.2: Camera detection and Replays camera selection UI improvements
   - On macOS, built-in cameras are now correctly hidden unless **Cameras > Include Internal Cameras** (`includeAll`) is on.
   - **Replays > Select Cameras** offers every enabled camera.

@@ -117,8 +117,36 @@ func TestDisableUnreachableUnicastDestinationsMarksFailuresDisabled(t *testing.T
 	if cfg.Unicast.Destinations[3].Enabled {
 		t.Fatal("expected already disabled destination to stay disabled")
 	}
-	if strings.Join(checked, ",") != "127.0.0.1,192.0.2.44" {
+	if strings.Join(checked, ",") != "192.0.2.44" {
 		t.Fatalf("unexpected reachability checks: %v", checked)
+	}
+}
+
+func TestDisableUnreachableUnicastDestinationsNeverDisablesLoopback(t *testing.T) {
+	cfg := &camerascfg.Config{
+		Unicast: camerascfg.UnicastConfig{
+			Enabled: true,
+			Destinations: []camerascfg.UnicastDestination{
+				{Address: "localhost", Enabled: false},
+			},
+		},
+	}
+
+	checker := func(address string, port int) error {
+		t.Fatalf("loopback destination %s:%d must not be probed", address, port)
+		return nil
+	}
+
+	reachable, issues, changed := disableUnreachableUnicastDestinations(cfg, 9001, checker)
+
+	if len(issues) != 0 {
+		t.Fatalf("expected no issues for loopback, got %#v", issues)
+	}
+	if !changed || !cfg.Unicast.Destinations[0].Enabled {
+		t.Fatalf("expected saved disabled loopback to be re-enabled, got %#v", cfg.Unicast.Destinations)
+	}
+	if len(reachable) != 1 || reachable[0].Address != camerascfg.PreviewLoopbackAddress {
+		t.Fatalf("expected loopback to remain the only destination, got %#v", reachable)
 	}
 }
 
@@ -149,6 +177,16 @@ func TestTCPDialErrorMeansReachable(t *testing.T) {
 		{
 			name: "connection reset means host reachable",
 			err:  &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNRESET)},
+			want: true,
+		},
+		{
+			name: "windows WSAECONNREFUSED means host reachable",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10061))},
+			want: true,
+		},
+		{
+			name: "windows WSAECONNRESET means host reachable",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10054))},
 			want: true,
 		},
 		{

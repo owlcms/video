@@ -326,8 +326,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Unicast.Enabled {
 		hasLoopback := false
-		for _, destination := range c.Unicast.Destinations {
+		for index := range c.Unicast.Destinations {
+			destination := &c.Unicast.Destinations[index]
 			if NormalizeUnicastDestinationAddress(destination.Address) == PreviewLoopbackAddress {
+				// TeeOutput always sends to loopback; keep the saved state consistent.
+				destination.Enabled = true
 				hasLoopback = true
 				break
 			}
