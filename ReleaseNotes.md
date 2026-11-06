@@ -1,6 +1,16 @@
 **Change log**
 
-- 3.0.3: Unicast destination fixes
+- 3.1.0-rc01: Replays access tokens, latest-clip endpoint, unicast fixes
+  - Replays can be protected with named, individually revocable 21-day viewer
+    tokens managed from **Replays > Access Tokens...**. Browser sign-in,
+    token-bearing replay URLs and HTTPS reverse proxies are supported. With no
+    tokens configured, Replays remains open as before.
+  - `/replay/N` returns the latest finished clip for camera N, read from the
+    replays folder as on the replays page, including after a restart. It no
+    longer waits up to 45 seconds for a clip being recorded or trimmed, and no
+    longer cuts off a download when the next recording starts.
+  - Stopping Video with Ctrl-C or SIGTERM no longer crashes with "The GLFW
+    library is not initialized".
   - On Windows, the local `127.0.0.1` unicast destination was wrongly reported as unreachable and unchecked at startup. The local destination is no longer checked and always stays enabled, since it feeds local preview and Replays.
   - On Windows, a remote unicast destination whose machine is up is no longer disabled just because nothing listens on the TCP port used for the reachability check.
   - **Replays > Use Streams from Cameras Server** now detects when the Cameras machine is not sending to the Replays machine. The Cameras machine's own `127.0.0.1` destination was mistaken for the Replays machine, so a missing destination was never reported. The message names the address to add on the Cameras machine, or says that it is present but unchecked. **Select Cameras** applies the same check when it fetches from the saved Cameras machine.
