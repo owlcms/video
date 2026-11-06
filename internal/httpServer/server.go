@@ -46,6 +46,11 @@ type ModuleAvailability struct {
 }
 
 type TemplateData struct {
+	Protected            bool
+	AccessName           string
+	AccessExpires        string
+	AccessMessage        string
+	SignOutLabel         string
 	Videos               []VideoInfo
 	StatusMsg            string
 	StatusCode           StatusCode // Change type to StatusCode instead of int
@@ -142,11 +147,8 @@ type ParsedReplayFile struct {
 
 type replayResponseRecorder struct {
 	http.ResponseWriter
-	camera     int
-	generation int64
 	statusCode int
 	bytesSent  int64
-	aborted    bool
 }
 
 func (r *replayResponseRecorder) WriteHeader(statusCode int) {
@@ -155,11 +157,6 @@ func (r *replayResponseRecorder) WriteHeader(statusCode int) {
 }
 
 func (r *replayResponseRecorder) Write(data []byte) (int, error) {
-	currentGeneration := currentReplayGeneration(r.camera)
-	if currentGeneration != r.generation {
-		r.aborted = true
-		return 0, fmt.Errorf("replay camera %d generation changed from %d to %d", r.camera, r.generation, currentGeneration)
-	}
 	if r.statusCode == 0 {
 		r.statusCode = http.StatusOK
 	}
@@ -223,16 +220,18 @@ func registerReplayRoutes(router *mux.Router) {
 	// Serve video files
 	x := config.GetVideoDir()
 	logging.InfoLogger.Printf("Serving video files from %s\n", x)
-	router.PathPrefix("/videos/").Handler(http.StripPrefix("/videos/", http.FileServer(http.Dir(x))))
+	router.PathPrefix("/videos/").Handler(guardReplay("api", http.StripPrefix("/videos/", http.FileServer(http.Dir(x)))))
 
-	router.HandleFunc("/", listFilesHandler)
-	router.HandleFunc("/api/sessions", handleReplaySessions)
-	router.HandleFunc("/api/sessions/{session}/lifts", handleReplaySessionLifts)
-	router.HandleFunc("/api/replay-state", handleReplayState)
-	router.HandleFunc("/ws", handleWebSocket)
+	router.HandleFunc("/auth/token", handleTokenSignIn).Methods(http.MethodPost)
+	router.HandleFunc("/auth/signout", handleSignOut).Methods(http.MethodPost)
+	router.Handle("/", guardReplay("page", http.HandlerFunc(listFilesHandler)))
+	router.Handle("/api/sessions", guardReplay("api", http.HandlerFunc(handleReplaySessions)))
+	router.Handle("/api/sessions/{session}/lifts", guardReplay("api", http.HandlerFunc(handleReplaySessionLifts)))
+	router.Handle("/api/replay-state", guardReplay("api", http.HandlerFunc(handleReplayState)))
+	router.Handle("/ws", guardReplay("ws", http.HandlerFunc(handleWebSocket)))
 	// Accept /replay/{camera:[0-9]+} and /replay/{camera:[0-9]+}.mp4
-	router.HandleFunc("/replay/{camera:[0-9]+}", handleReplay)
-	router.HandleFunc("/replay/{camera:[0-9]+}.mp4", handleReplay).Name("replay-mp4")
+	router.Handle("/replay/{camera:[0-9]+}", guardReplay("api", http.HandlerFunc(handleReplay)))
+	router.Handle("/replay/{camera:[0-9]+}.mp4", guardReplay("api", http.HandlerFunc(handleReplay))).Name("replay-mp4")
 }
 
 func registerUnavailableReplayRoutes(router *mux.Router) {
@@ -316,6 +315,7 @@ func listFilesHandler(w http.ResponseWriter, r *http.Request) {
 		data := TemplateData{
 			NoSessions: true,
 		}
+		setPageAccess(&data, r)
 		templates.ExecuteTemplate(w, "videolist.html", data)
 		return
 	}
@@ -435,6 +435,7 @@ func listFilesHandler(w http.ResponseWriter, r *http.Request) {
 		ShowAll:              showAll,
 		TotalCount:           len(videos),
 	}
+	setPageAccess(&data, r)
 
 	// Remove the SendStatus call here as it's not needed
 	// SendStatus(Ready, fmt.Sprintf("Total videos available: %d", fileCount))
@@ -546,7 +547,7 @@ func currentReplaySessionName() string {
 func setReplayAPIHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 	w.Header().Set("Pragma", "no-cache")
@@ -939,7 +940,7 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	cameraNum := vars["camera"]
 	requestTimestamp := replayLogTimestamp()
-	logging.InfoLogger.Printf("=== REPLAY REQUEST RECEIVED timestamp=%s method=%s uri=%q remote=%q rawCamera=%q userAgent=%q range=%q ifModifiedSince=%q ifNoneMatch=%q cacheControl=%q ===", requestTimestamp, r.Method, r.URL.RequestURI(), r.RemoteAddr, cameraNum, r.UserAgent(), r.Header.Get("Range"), r.Header.Get("If-Modified-Since"), r.Header.Get("If-None-Match"), r.Header.Get("Cache-Control"))
+	logging.InfoLogger.Printf("=== REPLAY REQUEST RECEIVED timestamp=%s method=%s path=%q remote=%q rawCamera=%q userAgent=%q range=%q ifModifiedSince=%q ifNoneMatch=%q cacheControl=%q ===", requestTimestamp, r.Method, r.URL.EscapedPath(), r.RemoteAddr, cameraNum, r.UserAgent(), r.Header.Get("Range"), r.Header.Get("If-Modified-Since"), r.Header.Get("If-None-Match"), r.Header.Get("Cache-Control"))
 
 	// Accept and strip a .mp4 extension if present in the URL
 	cameraNum = strings.TrimSuffix(cameraNum, ".mp4")
@@ -949,22 +950,13 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid camera number", http.StatusBadRequest)
 		return
 	}
-	generation := currentReplayGeneration(camera)
-	logging.InfoLogger.Printf("=== REPLAY REQUEST RESOLVING timestamp=%s camera=%d generation=%d ===", replayLogTimestamp(), camera, generation)
-
-	latestReplay, err := findPublishedReplayForCamera(camera)
-	if os.IsNotExist(err) {
-		logging.InfoLogger.Printf("=== REPLAY REQUEST WAITING timestamp=%s camera=%d timeoutMs=%d ===", replayLogTimestamp(), camera, replayReadyWaitTimeout.Milliseconds())
-		latestReplay, err = waitForPublishedReplayForCamera(r.Context(), camera)
-	}
+	// The latest finished clip for the camera; a clip being recorded or
+	// trimmed is never waited for.
+	latestReplay, err := latestReadyReplayForCamera(camera)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logging.WarningLogger.Printf("=== REPLAY REQUEST NOT FOUND timestamp=%s camera=%d waitedMs=%d ===", replayLogTimestamp(), camera, time.Since(startTime).Milliseconds())
-			http.Error(w, "No completed replay published for camera "+cameraNum, http.StatusNotFound)
-			return
-		}
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			logging.WarningLogger.Printf("=== REPLAY REQUEST ABORTED timestamp=%s camera=%d waitedMs=%d error=%v ===", replayLogTimestamp(), camera, time.Since(startTime).Milliseconds(), err)
+			logging.WarningLogger.Printf("=== REPLAY REQUEST NOT FOUND timestamp=%s camera=%d ===", replayLogTimestamp(), camera)
+			http.Error(w, "No completed replay for camera "+cameraNum, http.StatusNotFound)
 			return
 		}
 		logging.ErrorLogger.Printf("=== REPLAY REQUEST FAILED timestamp=%s camera=%d error=%v ===", replayLogTimestamp(), camera, err)
@@ -985,8 +977,7 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Replay file not available for camera "+cameraNum, http.StatusInternalServerError)
 		return
 	}
-	generation = currentReplayGeneration(camera)
-	logging.InfoLogger.Printf("=== REPLAY REQUEST SERVING timestamp=%s camera=%d generation=%d session=%q filename=%q video=%q sizeBytes=%d modTime=%q ===", replayLogTimestamp(), camera, generation, latestReplay.Session, latestReplay.Filename, videoPath, videoInfo.Size(), videoInfo.ModTime().Format("2006-01-02 15:04:05.000 MST"))
+	logging.InfoLogger.Printf("=== REPLAY REQUEST SERVING timestamp=%s camera=%d session=%q filename=%q video=%q sizeBytes=%d modTime=%q ===", replayLogTimestamp(), camera, latestReplay.Session, latestReplay.Filename, videoPath, videoInfo.Size(), videoInfo.ModTime().Format("2006-01-02 15:04:05.000 MST"))
 	w.Header().Set("X-Replay-Camera", strconv.Itoa(camera))
 	w.Header().Set("X-Replay-Session", latestReplay.Session)
 	w.Header().Set("X-Replay-Filename", latestReplay.Filename)
@@ -1008,10 +999,10 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("If-Range")
 	r.Header.Del("If-Modified-Since")
 	r.Header.Del("If-None-Match")
-	responseRecorder := &replayResponseRecorder{ResponseWriter: w, camera: camera, generation: generation}
+	responseRecorder := &replayResponseRecorder{ResponseWriter: w}
 	http.ServeFile(responseRecorder, r, videoPath)
 	if responseRecorder.statusCode == 0 {
 		responseRecorder.statusCode = http.StatusOK
 	}
-	logging.InfoLogger.Printf("=== REPLAY RESPONSE COMPLETE timestamp=%s camera=%d generation=%d currentGeneration=%d status=%d bytesSent=%d aborted=%t durationMs=%d contentLength=%q contentRange=%q acceptRanges=%q video=%q ===", replayLogTimestamp(), camera, generation, currentReplayGeneration(camera), responseRecorder.statusCode, responseRecorder.bytesSent, responseRecorder.aborted, time.Since(startTime).Milliseconds(), w.Header().Get("Content-Length"), w.Header().Get("Content-Range"), w.Header().Get("Accept-Ranges"), videoPath)
+	logging.InfoLogger.Printf("=== REPLAY RESPONSE COMPLETE timestamp=%s camera=%d status=%d bytesSent=%d durationMs=%d contentLength=%q contentRange=%q acceptRanges=%q video=%q ===", replayLogTimestamp(), camera, responseRecorder.statusCode, responseRecorder.bytesSent, time.Since(startTime).Milliseconds(), w.Header().Get("Content-Length"), w.Header().Get("Content-Range"), w.Header().Get("Accept-Ranges"), videoPath)
 }

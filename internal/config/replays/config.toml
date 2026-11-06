@@ -1,6 +1,12 @@
 # HTTP server port
 port = 8091
 
+# Public HTTPS origin for broadcaster links (optional).
+# publicUrl = "https://a.replays.example.org"
+
+# Reverse proxies trusted to provide client addresses and HTTPS information.
+# trustedProxies = ["192.168.1.10"]
+
 # address of owlcms.  a scan of the local network will be done if undefined or unreachable.
 owlcms = ""
 

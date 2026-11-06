@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html><head><title>Replays</title><link rel="stylesheet" href="/static/css/styles.css"></head>
+<body>
+<h1>Replays{{if .Platform}} - Platform {{.Platform}}{{end}}</h1>
+<form method="post" action="/auth/token">
+  <input type="hidden" name="username" value="replays-{{.Platform}}" autocomplete="username">
+  <label for="token">{{.TokenLabel}}</label>
+  <input id="token" name="token" type="password" autocomplete="current-password" required maxlength="128" autofocus>
+  <input type="hidden" name="next" value="{{.Next}}">
+  <button type="submit">{{.SignIn}}</button>
+  {{if .Error}}<p>{{.ErrorText}}</p>{{end}}
+</form>
+</body></html>

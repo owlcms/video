@@ -1,16 +1,19 @@
 package httpServer
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/owlcms/video/internal/config"
+	"github.com/owlcms/video/internal/logging"
 	"github.com/owlcms/video/internal/state"
 )
 
@@ -19,41 +22,24 @@ func withReplayTestVideoDir(t *testing.T) string {
 
 	oldVideoDir := config.GetVideoDir()
 	oldSession := state.CurrentSession
-	oldWaitTimeout := replayReadyWaitTimeout
-	oldPollInterval := replayReadyPollInterval
 	publishedReplayMu.Lock()
-	oldPublishedReplays := make(map[int]ReplayCameraState, len(publishedReplays))
-	for camera, replay := range publishedReplays {
-		oldPublishedReplays[camera] = replay
-	}
+	oldPublishedReplays := publishedReplays
+	oldInFlightSince := inFlightSince
+	publishedReplays = make(map[int]ReplayCameraState)
+	inFlightSince = make(map[int]time.Time)
 	publishedReplayMu.Unlock()
-	replayGenerationMu.Lock()
-	oldGenerations := make(map[int]int64, len(replayGenerations))
-	for camera, generation := range replayGenerations {
-		oldGenerations[camera] = generation
-	}
-	replayGenerationMu.Unlock()
 
 	videoDir := t.TempDir()
 	config.SetVideoDir(videoDir)
 	state.CurrentSession = "3"
-	replayReadyWaitTimeout = 20 * time.Millisecond
-	replayReadyPollInterval = time.Millisecond
-	publishedReplayMu.Lock()
-	publishedReplays = make(map[int]ReplayCameraState)
-	publishedReplayMu.Unlock()
 
 	t.Cleanup(func() {
 		config.SetVideoDir(oldVideoDir)
 		state.CurrentSession = oldSession
-		replayReadyWaitTimeout = oldWaitTimeout
-		replayReadyPollInterval = oldPollInterval
 		publishedReplayMu.Lock()
 		publishedReplays = oldPublishedReplays
+		inFlightSince = oldInFlightSince
 		publishedReplayMu.Unlock()
-		replayGenerationMu.Lock()
-		replayGenerations = oldGenerations
-		replayGenerationMu.Unlock()
 	})
 
 	return videoDir
@@ -139,40 +125,100 @@ func TestPublishedReplayStatePublishesAndClears(t *testing.T) {
 	}
 }
 
-func TestHandleReplayRequiresPublishedState(t *testing.T) {
+func TestHandleReplayServesLatestReadyClipFromDisk(t *testing.T) {
+	videoDir := withReplayTestVideoDir(t)
+	get := func(camera string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/replay/"+camera, nil), map[string]string{"camera": camera})
+		handleReplay(recorder, request)
+		return recorder
+	}
+	write := func(name, body string, modTime time.Time) {
+		t.Helper()
+		path := filepath.Join(videoDir, "3", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	started := time.Now()
+	if got := get("1"); got.Code != http.StatusNotFound {
+		t.Fatalf("no clip yet: got %d, want 404", got.Code)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("no clip yet: answered after %s, must not wait", elapsed)
+	}
+
+	// After a restart nothing is published; the newest clip on disk is served.
+	previous := "2026-05-08_11h09m59s_LARRIVEE_Mariane_CLEANJERK_attempt1_Camera1.mp4"
+	write(previous, "previous", time.Now().Add(-time.Minute))
+	write("2026-05-08_10h00m00s_OTHER_Athlete_SNATCH_attempt1_Camera1.mp4", "older", time.Now().Add(-2*time.Minute))
+	got := get("1")
+	if got.Code != http.StatusOK || got.Body.String() != "previous" {
+		t.Fatalf("after restart: got %d %q, want the newest clip on disk", got.Code, got.Body.String())
+	}
+	if got.Header().Get("X-Replay-Filename") != previous || got.Header().Get("Connection") != "close" {
+		t.Fatalf("unexpected replay headers %v", got.Header())
+	}
+
+	// The next athlete's clock starts: the previous clip is still served.
+	if err := ClearPublishedReplayState(1); err != nil {
+		t.Fatal(err)
+	}
+	if got := get("1"); got.Code != http.StatusOK || got.Body.String() != "previous" {
+		t.Fatalf("while recording: got %d %q, want the previous clip", got.Code, got.Body.String())
+	}
+
+	// The trim writes the new clip in place; until published it is skipped.
+	next := "2026-05-08_11h12m30s_SMITH_Jane_SNATCH_attempt2_Camera1.mp4"
+	write(next, "partial", time.Now().Add(time.Second))
+	if got := get("1"); got.Code != http.StatusOK || got.Body.String() != "previous" {
+		t.Fatalf("while trimming: got %d %q, want the previous clip", got.Code, got.Body.String())
+	}
+
+	if err := PublishReplayState(1, "3", next, 12345); err != nil {
+		t.Fatal(err)
+	}
+	if got := get("1"); got.Code != http.StatusOK || got.Body.String() != "partial" {
+		t.Fatalf("after publish: got %d %q, want the new clip", got.Code, got.Body.String())
+	}
+
+	if got := get("2"); got.Code != http.StatusNotFound {
+		t.Fatalf("camera without clips: got %d, want 404", got.Code)
+	}
+}
+
+func TestHandleReplayOmitsQueryFromRequestLog(t *testing.T) {
 	videoDir := withReplayTestVideoDir(t)
 	filename := "2026-05-08_11h09m59s_LARRIVEE_Mariane_CLEANJERK_attempt1_Camera1.mp4"
 	writeReplayTestFile(t, videoDir, "3", filename)
-
-	recorder := httptest.NewRecorder()
-	handleReplay(recorder, mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/replay/1", nil), map[string]string{"camera": "1"}))
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected missing published state to return 404, got %d", recorder.Code)
-	}
-
 	if err := PublishReplayState(1, "3", filename, 12345); err != nil {
-		t.Fatalf("failed to publish replay state: %v", err)
+		t.Fatalf("publish replay state: %v", err)
 	}
 
-	recorder = httptest.NewRecorder()
-	handleReplay(recorder, mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/replay/1", nil), map[string]string{"camera": "1"}))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected published state to return 200, got %d", recorder.Code)
-	}
-	if recorder.Body.String() != "video" {
-		t.Fatalf("unexpected response body %q", recorder.Body.String())
-	}
-	if recorder.Header().Get("X-Replay-One-Shot") != "true" {
-		t.Fatalf("expected replay response to be marked one-shot")
-	}
-	if recorder.Header().Get("Connection") != "close" {
-		t.Fatalf("expected replay response to request connection close")
-	}
+	var logOutput bytes.Buffer
+	oldWriter := logging.InfoLogger.Writer()
+	logging.InfoLogger.SetOutput(&logOutput)
+	t.Cleanup(func() { logging.InfoLogger.SetOutput(oldWriter) })
 
-	recorder = httptest.NewRecorder()
-	handleReplay(recorder, mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/replay/1", nil), map[string]string{"camera": "1"}))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected reusable published state to serve another independent request, got %d", recorder.Code)
+	request := httptest.NewRequest(http.MethodGet, "/replay/1.mp4?token=sample-secret&other=sample-query", nil)
+	recorder := httptest.NewRecorder()
+	newRouter(ModuleAvailability{Replays: true}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "video" {
+		t.Fatalf("replay response: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	logged := logOutput.String()
+	if !strings.Contains(logged, `path="/replay/1.mp4"`) {
+		t.Fatalf("request path missing from log: %s", logged)
+	}
+	if strings.Contains(logged, "sample-secret") || strings.Contains(logged, "sample-query") {
+		t.Fatalf("request query leaked into log: %s", logged)
 	}
 }
 
@@ -203,29 +249,5 @@ func TestHandleReplayStateIncludesPublishedDuration(t *testing.T) {
 	}
 	if response.Cameras[0].VideoPath != "/videos/3/"+filename {
 		t.Fatalf("unexpected replay state path %q", response.Cameras[0].VideoPath)
-	}
-}
-
-func TestReplayResponseRecorderAbortsWhenGenerationChanges(t *testing.T) {
-	withReplayTestVideoDir(t)
-
-	generation := currentReplayGeneration(1)
-	response := httptest.NewRecorder()
-	recorder := &replayResponseRecorder{
-		ResponseWriter: response,
-		camera:         1,
-		generation:     generation,
-	}
-
-	bumpReplayGeneration(1)
-	written, err := recorder.Write([]byte("video"))
-	if err == nil {
-		t.Fatal("expected stale replay response write to fail")
-	}
-	if written != 0 {
-		t.Fatalf("expected no bytes to be written after generation change, got %d", written)
-	}
-	if !recorder.aborted {
-		t.Fatal("expected recorder to mark response aborted")
 	}
 }

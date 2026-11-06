@@ -2,6 +2,7 @@ package replays
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,17 +15,19 @@ import (
 
 // Config represents the replays configuration file structure.
 type Config struct {
-	Port          int                          `toml:"port"`
-	VideoDir      string                       `toml:"videoDir"`
-	Width         int                          `toml:"width"`
-	Height        int                          `toml:"height"`
-	Fps           int                          `toml:"fps"`
-	OwlCMS        string                       `toml:"owlcms"`
-	Platform      string                       `toml:"platform"`
-	CamerasServer string                       `toml:"camerasServer"`
-	LogFfmpeg     bool                         `toml:"logFfmpeg"`
-	Multicast     config.MulticastSettings     `toml:"mpeg-ts"`
-	Cameras       []config.CameraConfiguration `toml:"-"`
+	Port           int                          `toml:"port"`
+	VideoDir       string                       `toml:"videoDir"`
+	Width          int                          `toml:"width"`
+	Height         int                          `toml:"height"`
+	Fps            int                          `toml:"fps"`
+	OwlCMS         string                       `toml:"owlcms"`
+	Platform       string                       `toml:"platform"`
+	CamerasServer  string                       `toml:"camerasServer"`
+	PublicURL      string                       `toml:"publicUrl"`
+	TrustedProxies []string                     `toml:"trustedProxies"`
+	LogFfmpeg      bool                         `toml:"logFfmpeg"`
+	Multicast      config.MulticastSettings     `toml:"mpeg-ts"`
+	Cameras        []config.CameraConfiguration `toml:"-"`
 }
 
 var currentConfig *Config
@@ -42,6 +45,16 @@ func LoadConfig(configFile string) (*Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(configFile, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file '%s': %w\n\nPlease check the file syntax and ensure all values are properly formatted", configFile, err)
+	}
+	if cfg.PublicURL != "" {
+		u, err := url.Parse(cfg.PublicURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+			u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			logging.WarningLogger.Printf("Ignoring invalid publicUrl in %s", configFile)
+			cfg.PublicURL = ""
+		} else {
+			cfg.PublicURL = strings.TrimSuffix(u.String(), "/")
+		}
 	}
 
 	if cfg.VideoDir == "" {

@@ -12,8 +12,10 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/owlcms/video/internal/access"
 	"github.com/owlcms/video/internal/config"
 	"github.com/owlcms/video/internal/config/cameras"
 	replayscfg "github.com/owlcms/video/internal/config/replays"
@@ -36,6 +38,7 @@ var (
 	startupScanMu     sync.Mutex
 	startupScanCancel context.CancelFunc
 	terminated        bool
+	viewerAccess      *access.Service
 )
 
 // beginStartupScan cancels any in-flight scan and returns the context for a new
@@ -435,6 +438,7 @@ type Options struct {
 	CamerasConfigPath string
 	CamerasAvailable  bool
 	Enabled           bool
+	Access            *access.Service
 }
 
 // UI exposes the Replays module content, menus and lifecycle hooks to the host.
@@ -452,6 +456,7 @@ func Init(opts Options) error {
 	moduleConfigPath = opts.ConfigPath
 	camerasAvailable = opts.CamerasAvailable
 	localCamerasConfigPath = opts.CamerasConfigPath
+	viewerAccess = opts.Access
 
 	cfg, err := replayscfg.LoadConfig(opts.ConfigPath)
 	if err != nil {
@@ -549,10 +554,22 @@ func BuildUI(window fyne.Window) *UI {
 	parsedURL, _ := url.Parse(urlStr)
 	replaysListLabel := widget.NewLabel("Open replay list in browser:")
 	hyperlink := widget.NewHyperlink(urlStr, parsedURL)
+	accessStatus := widget.NewLabel("")
+	if viewerAccess != nil {
+		refreshAccessStatus := func() {
+			accessStatus.SetText(accessStatusText(viewerAccess))
+			if refreshAccessDialog != nil {
+				refreshAccessDialog()
+			}
+		}
+		refreshAccessStatus()
+		viewerAccess.OnChange(func() { fyne.Do(refreshAccessStatus) })
+	}
 
 	upperContent := container.NewVBox(
 		topContainer,
 		container.NewHBox(replaysListLabel, hyperlink),
+		accessStatus,
 		widget.NewSeparator(),
 		startupMessages,
 		statusLabel,
@@ -564,6 +581,11 @@ func BuildUI(window fyne.Window) *UI {
 	})
 	remoteCamerasItem.Disabled = camerasAvailable
 	replaysMenuItems := []*fyne.MenuItem{
+		fyne.NewMenuItem(lang.Localize("Access Tokens..."), func() {
+			if viewerAccess != nil {
+				showAccessDialog(window, cfg, viewerAccess)
+			}
+		}),
 		fyne.NewMenuItem("Open Replays Directory", func() {
 			if err := opendir.Open(cfg.VideoDir); err != nil {
 				dialog.ShowError(fmt.Errorf("open replays directory: %w", err), window)
@@ -634,6 +656,7 @@ func BuildUI(window fyne.Window) *UI {
 		if isTerminated() {
 			return
 		}
+		httpServer.SetTrustedProxies(cfg.TrustedProxies)
 		go httpServer.StartServer(cfg.Port, httpServer.ModuleAvailability{
 			Cameras: camerasAvailable,
 			Replays: replaysAvailable,

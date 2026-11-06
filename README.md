@@ -39,6 +39,70 @@ All three configuration files live in a single directory, selected with `--confi
 
 Run with `--extractConfig` to create the files with their default contents.
 
+### Replays access tokens
+
+Replays are open to anyone who can reach the server until a token is added.
+In the Video application's **Replays > Access Tokens...** menu, add a named
+token for each broadcaster and separate tokens for OBS and Tracker. All tokens
+grant the same replay access. A token is shown only when created or regenerated
+and expires after 21 days; distribute it securely.
+
+Revoking or regenerating one token invalidates that holder's future requests
+and browser sessions without affecting the other tokens. A download or
+WebSocket already open is not interrupted. Revoking the last token opens
+Replays to everyone again; the confirmation warns about this. Expired tokens
+remain in the list and do not reopen access. **Open access** deletes all
+tokens and makes Replays accessible without credentials.
+
+Broadcasters may open the Replays page and enter their token in the sign-in
+form, or follow `https://a.replays.example.org/?token=TOKEN`. The link signs
+the browser in and removes the token from the address bar. Players and scripts
+may use `?token=TOKEN` on each replay URL or an `Authorization: Bearer TOKEN`
+header. Treat token-bearing links like passwords: they may be stored in
+browser history, player settings or other logs.
+See the [broadcaster guide](docs/replay-broadcaster.md) for a handout.
+
+Video stores token hashes and its session signing key in `video-access.json`.
+With the Control Panel, this is in the `owlcms-video` installation directory,
+above the version folders. A standalone launch stores it in `--configDir`;
+`VIDEO_SECURITYDIR` overrides the location. The file is owner-only on Unix.
+On Windows, protect the installation directory with an appropriate ACL; a
+standalone directory shared with other users does not protect the token file.
+
+For external access, use HTTPS through a trusted reverse proxy rather than
+forwarding Video's port directly. With one Video laptop per platform:
+
+1. Give each platform a DNS name pointing to the router's external address
+   (a CNAME to its dynamic DNS name works). Forward ports 80 and 443 to Caddy,
+   not Video's port 8091.
+2. In each laptop's `replays.toml`, set `trustedProxies` to Caddy's LAN address
+   (or `127.0.0.1` if Caddy is local) and `publicUrl` to that platform's public
+   HTTPS origin. Only trust a proxy under your control; do not trust the router
+   or the entire LAN.
+3. Configure Caddy with one site per platform:
+
+   ```caddyfile
+   a.replays.example.org {
+       respond /api/cameras/config 404
+       reverse_proxy 192.168.1.50:8091
+   }
+   b.replays.example.org {
+       respond /api/cameras/config 404
+       reverse_proxy 192.168.1.51:8091
+   }
+   ```
+
+Caddy obtains and renews certificates and proxies WebSockets. The connection
+from Caddy to Video is plain HTTP, so the LAN and connected hosts must be
+trusted. The Cameras configuration endpoint remains unprotected on that LAN
+and may contain camera credentials; Caddy blocks it externally.
+
+Do not enable request access logs containing token-bearing URLs or credentials.
+Caddy does not enable access logs by default. If access logging is enabled,
+filter `request>uri`, `request>headers>Referer`, `request>headers>Cookie` and
+`request>headers>Authorization` out of the logs, and verify the resulting log
+with a test token before distributing real tokens.
+
 ## Command line
 
 ```

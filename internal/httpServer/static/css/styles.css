@@ -10,6 +10,13 @@ h1 {
 	color: #333;
 }
 
+.signout {
+	position: absolute;
+	top: 16px;
+	right: 16px;
+	margin: 0;
+}
+
 ul {
 	list-style-type: none;
 	padding: 0;

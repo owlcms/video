@@ -92,7 +92,7 @@
         }
 
         function connectWebSocket() {
-            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`);
             
             ws.onopen = function() {
                 console.log('WebSocket connected');
@@ -112,7 +112,10 @@
 
             ws.onclose = function() {
                 console.log('WebSocket closed, reconnecting...');
-                setTimeout(connectWebSocket, 1000);
+                fetch('/api/replay-state', {cache: 'no-store'}).then(response => {
+                    if (response.status === 401) location.reload();
+                    else setTimeout(connectWebSocket, 1000);
+                }).catch(() => setTimeout(connectWebSocket, 1000));
             };
         }
 
@@ -121,6 +124,11 @@
     </script>
 </head>
 <body>
+    {{if .Protected}}
+    <form class="signout" method="post" action="/auth/signout">
+        <button type="submit" title="{{.AccessMessage}}" aria-label="{{.SignOutLabel}} ({{.AccessMessage}})">{{.SignOutLabel}}</button>
+    </form>
+    {{end}}
     <h1>Replays{{if and .HasMultiplePlatforms .Platform}} - Platform {{.Platform}}{{else if .HasMultiplePlatforms}} - No Platform Selected{{end}}</h1>
     
     {{if .NoSessions}}

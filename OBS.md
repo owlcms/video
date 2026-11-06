@@ -4,6 +4,16 @@ Getting correctly trimmed replays in OBS automatically is very difficult.  Since
 
 The replays application exposes a `replay` endpoint.  Accessing the URL `.../replay/1` will fetch the last replay captured on camera 1.  If you define a *media source* in OBS to open that URL, you can include a replay in any of your scenes.
 
+`/replay/1` always returns the latest *finished* clip for camera 1, the same one shown on the replays page. It never waits for a clip being recorded or trimmed: while the next athlete is lifting, it still returns the previous clip, and it answers "not found" at once if camera 1 has no clip.
+
+If Replays access tokens are enabled, create a separate token for OBS in
+**Replays > Access Tokens...**, then use
+`http://<video-host>:8091/replay/1?token=<token>` as the media source URL.
+Update the URL after regenerating the token. With no tokens configured, the
+existing URL works unchanged. For the Tracker OBS plugins, enter the token in
+their **Replays token** option instead. Token-bearing OBS settings should be
+treated as passwords.
+
 ### 1. Defining the Replay Scene
 
 You define a replay scene normally.  In this example, it is called `OwlcmsReplay`.  The scene will include a media source for playing the video.  In the following example, we define `owlcmsReplaySource`.   You need to replace `localhost` with the actual IP address of your replays server.

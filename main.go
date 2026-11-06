@@ -15,9 +15,11 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
+	"github.com/owlcms/video/internal/access"
 	"github.com/owlcms/video/internal/assets"
 	"github.com/owlcms/video/internal/cameras"
 	"github.com/owlcms/video/internal/config"
+	"github.com/owlcms/video/internal/httpServer"
 	"github.com/owlcms/video/internal/logging"
 	"github.com/owlcms/video/internal/menubar"
 	"github.com/owlcms/video/internal/opendir"
@@ -73,6 +75,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "initialize logging: %v\n", err)
 		os.Exit(1)
 	}
+	logging.InfoLogger.Printf("Video security directory: %s", config.SecurityDir())
+	viewerAccess := access.Open(config.SecurityDir())
+	httpServer.SetAccess(viewerAccess)
+	if err := viewerAccess.LoadError(); err != nil {
+		logging.ErrorLogger.Printf("Video access configuration unavailable: %v", err)
+	}
 
 	os.Setenv("FYNE_TELEMETRY", "0")
 	myApp := app.NewWithID("app.owlcms.video")
@@ -97,6 +105,7 @@ func main() {
 		CamerasConfigPath: paths.Cameras,
 		CamerasAvailable:  selection.cameras,
 		Enabled:           replaysAvailable,
+		Access:            viewerAccess,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -208,10 +217,11 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		// Fyne also handles this signal and may quit first, dropping queued
-		// fyne.Do calls, so the modules are stopped here directly.
+		// Fyne handles this signal too and quits the app itself. Queuing our
+		// own quit races with that: once Fyne has terminated GLFW, a queued
+		// fyne.Do runs on this goroutine and closing the window panics.
+		// Only the modules are stopped here.
 		shutdownModules()
-		fyne.Do(quit)
 	}()
 
 	window.Show()

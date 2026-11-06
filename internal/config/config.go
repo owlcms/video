@@ -55,7 +55,19 @@ var (
 
 const ControlPanelDirEnv = "VIDEO_CONTROLPANEL_DIR"
 const SharedConfigDirEnv = "VIDEO_CONFIGDIR"
+const SecurityDirEnv = "VIDEO_SECURITYDIR"
 const LocalVideoConfigDir = "video_config"
+
+// SecurityDir returns the stable directory holding the access-token file.
+func SecurityDir() string {
+	if override := strings.TrimSpace(os.Getenv(SecurityDirEnv)); override != "" {
+		return override
+	}
+	if strings.TrimSpace(os.Getenv(ControlPanelDirEnv)) != "" {
+		return filepath.Dir(GetInstallDir())
+	}
+	return GetInstallDir()
+}
 
 // The video application keeps exactly these three documents side by side in a
 // single configuration directory.

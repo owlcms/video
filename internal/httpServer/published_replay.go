@@ -1,7 +1,6 @@
 package httpServer
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,26 +14,16 @@ import (
 )
 
 var (
-	replayReadyWaitTimeout  = 45 * time.Second
-	replayReadyPollInterval = 100 * time.Millisecond
-	publishedReplayMu       sync.Mutex
-	publishedReplays        = make(map[int]ReplayCameraState)
-	replayGenerationMu      sync.Mutex
-	replayGenerations       = make(map[int]int64)
+	publishedReplayMu sync.Mutex
+	// publishedReplays is the current attempt's clip per camera, as reported by
+	// /api/replay-state and the Ready message. It is cleared when a recording
+	// starts, so clients can tell that a new clip is on its way.
+	publishedReplays = make(map[int]ReplayCameraState)
+	// inFlightSince records when the current recording started for a camera.
+	// Until its clip is published, files written since then may be incomplete
+	// and /replay/{camera} does not serve them.
+	inFlightSince = make(map[int]time.Time)
 )
-
-func currentReplayGeneration(camera int) int64 {
-	replayGenerationMu.Lock()
-	defer replayGenerationMu.Unlock()
-	return replayGenerations[camera]
-}
-
-func bumpReplayGeneration(camera int) int64 {
-	replayGenerationMu.Lock()
-	defer replayGenerationMu.Unlock()
-	replayGenerations[camera]++
-	return replayGenerations[camera]
-}
 
 func replayLogTimestamp() string {
 	return time.Now().Format("2006-01-02 15:04:05.000 MST")
@@ -55,16 +44,18 @@ func ClearPublishedReplayState(camera int) error {
 		return fmt.Errorf("invalid camera number %d", camera)
 	}
 
-	generation := bumpReplayGeneration(camera)
 	publishedReplayMu.Lock()
 	_, existed := publishedReplays[camera]
 	delete(publishedReplays, camera)
+	if _, inFlight := inFlightSince[camera]; !inFlight {
+		inFlightSince[camera] = time.Now()
+	}
 	publishedReplayMu.Unlock()
 
 	if existed {
-		logging.InfoLogger.Printf("=== REPLAY STATE CLEARED timestamp=%s camera=%d generation=%d ===", replayLogTimestamp(), camera, generation)
+		logging.InfoLogger.Printf("=== REPLAY STATE CLEARED timestamp=%s camera=%d ===", replayLogTimestamp(), camera)
 	} else {
-		logging.InfoLogger.Printf("=== REPLAY STATE ALREADY ABSENT timestamp=%s camera=%d generation=%d ===", replayLogTimestamp(), camera, generation)
+		logging.InfoLogger.Printf("=== REPLAY STATE ALREADY ABSENT timestamp=%s camera=%d ===", replayLogTimestamp(), camera)
 	}
 	return nil
 }
@@ -119,6 +110,7 @@ func PublishReplayState(camera int, session string, filename string, durationMs 
 
 	publishedReplayMu.Lock()
 	publishedReplays[camera] = replayState
+	delete(inFlightSince, camera)
 	publishedReplayMu.Unlock()
 
 	logging.InfoLogger.Printf("=== REPLAY STATE PUBLISHED timestamp=%s camera=%d session=%q filename=%q durationMs=%d video=%q ===", replayLogTimestamp(), camera, parsedReplay.Session, parsedReplay.Filename, replayState.DurationMs, videoPath)
@@ -176,29 +168,74 @@ func findPublishedReplayForCamera(camera int) (*ReplayCameraState, error) {
 	return &replayState, nil
 }
 
-func waitForPublishedReplayForCamera(ctx context.Context, camera int) (*ReplayCameraState, error) {
-	replay, err := findPublishedReplayForCamera(camera)
-	if err == nil || !os.IsNotExist(err) {
-		return replay, err
+// latestReadyReplayForCamera returns the newest finished clip for a camera,
+// read from disk as listed on the replays page. It never waits: a clip being
+// recorded or trimmed is skipped, and the previous one is returned.
+func latestReadyReplayForCamera(camera int) (*ReplayCameraState, error) {
+	if camera < 1 {
+		return nil, fmt.Errorf("invalid camera number %d", camera)
 	}
 
-	deadline := time.NewTimer(replayReadyWaitTimeout)
-	defer deadline.Stop()
+	publishedReplayMu.Lock()
+	notAfter := inFlightSince[camera]
+	publishedReplayMu.Unlock()
+	return newestReplayOnDisk(camera, notAfter)
+}
 
-	ticker := time.NewTicker(replayReadyPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-deadline.C:
+// newestReplayOnDisk scans the session directories for the newest clip of a
+// camera. Files modified at or after notAfter (when set) are ignored.
+func newestReplayOnDisk(camera int, notAfter time.Time) (*ReplayCameraState, error) {
+	videoDir := config.GetVideoDir()
+	sessions, err := os.ReadDir(videoDir)
+	if err != nil {
+		if os.IsNotExist(err) {
 			return nil, os.ErrNotExist
-		case <-ticker.C:
-			replay, err = findPublishedReplayForCamera(camera)
-			if err == nil || !os.IsNotExist(err) {
-				return replay, err
+		}
+		return nil, err
+	}
+
+	var newest *ParsedReplayFile
+	for _, session := range sessions {
+		if !session.IsDir() || session.Name() == "unsorted" {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(videoDir, session.Name()))
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			parsed, ok := parseReplayFilename(session.Name(), file.Name())
+			if !ok || parsed.Camera != camera {
+				continue
+			}
+			if !notAfter.IsZero() {
+				info, err := file.Info()
+				if err != nil || !info.ModTime().Before(notAfter) {
+					continue
+				}
+			}
+			if newest == nil || parsed.Timestamp > newest.Timestamp ||
+				(parsed.Timestamp == newest.Timestamp && parsed.Filename > newest.Filename) {
+				newest = parsed
 			}
 		}
 	}
+	if newest == nil {
+		return nil, os.ErrNotExist
+	}
+
+	return &ReplayCameraState{
+		Camera:        camera,
+		Available:     true,
+		Session:       newest.Session,
+		Filename:      newest.Filename,
+		VideoPath:     newest.URL,
+		AthleteName:   newest.Athlete,
+		LiftType:      newest.LiftType,
+		AttemptNumber: newest.AttemptNumber,
+		Timestamp:     newest.Timestamp,
+	}, nil
 }
