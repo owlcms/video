@@ -46,16 +46,73 @@ func setPageAccess(data *TemplateData, r *http.Request) {
 }
 
 type failureEntry struct {
-	start, last, blockedUntil, lastLogged time.Time
-	count                                 int
+	start, last, blockedUntil time.Time
+	count                     int
+}
+
+type refusalEntry struct {
+	last    time.Time
+	repeats int
 }
 
 var failures = struct {
 	sync.Mutex
 	entries map[string]failureEntry
-}{entries: make(map[string]failureEntry)}
+	logged  map[string]refusalEntry
+}{entries: make(map[string]failureEntry), logged: make(map[string]refusalEntry)}
 
-func throttled(addr string, route string, failed bool) bool {
+// logRefusal reports why a replay request was refused, never the token. The same reason from the same address is
+// logged at most once a minute; the repeats are counted on the next line, so a client retrying every second does not
+// flood the log.
+func logRefusal(addr, route, reason string) {
+	failures.Lock()
+	defer failures.Unlock()
+	now := time.Now()
+	key := addr + "\x00" + reason
+	entry, exists := failures.logged[key]
+	if exists && now.Sub(entry.last) < time.Minute {
+		entry.repeats++
+		failures.logged[key] = entry
+		return
+	}
+	if !exists && len(failures.logged) >= 1024 {
+		for k, v := range failures.logged {
+			if now.Sub(v.last) >= time.Minute {
+				delete(failures.logged, k)
+			}
+		}
+	}
+	repeats := ""
+	if entry.repeats > 0 {
+		repeats = fmt.Sprintf(" (and %d more since %s)", entry.repeats, entry.last.Format(time.TimeOnly))
+	}
+	logging.WarningLogger.Printf("Replays access refused from %s on %s: %s%s", addr, route, reason, repeats)
+	if len(failures.logged) < 1024 {
+		failures.logged[key] = refusalEntry{last: now}
+	}
+}
+
+// refusalReason describes a refused credential for the log.
+func refusalReason(decision access.Decision, explicit, validSyntax bool) string {
+	switch {
+	case decision == access.ServiceUnavailable:
+		return "the access token file is unreadable"
+	case explicit && !validSyntax:
+		return "malformed credentials: several tokens, or an Authorization header that is not one Bearer token"
+	case explicit && decision == access.ExpiredToken:
+		return "token expired"
+	case explicit:
+		return "token not recognized: wrong, regenerated or revoked"
+	case decision == access.Missing:
+		return "no token"
+	case decision == access.ExpiredToken:
+		return "session expired with its token"
+	default:
+		return "session cookie not valid: token regenerated or revoked"
+	}
+}
+
+func throttled(addr string, failed bool) bool {
 	failures.Lock()
 	defer failures.Unlock()
 	now := time.Now()
@@ -80,10 +137,6 @@ func throttled(addr string, route string, failed bool) bool {
 	}
 	entry.count++
 	entry.last = now
-	if entry.lastLogged.IsZero() || now.Sub(entry.lastLogged) >= time.Minute {
-		logging.WarningLogger.Printf("Replays access refused from %s on %s", addr, route)
-		entry.lastLogged = now
-	}
 	if entry.count >= 20 {
 		entry.blockedUntil = now.Add(time.Minute)
 	}
@@ -146,13 +199,16 @@ func guardReplay(mode string, next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		route := r.URL.EscapedPath()
+		addr, _ := clientOf(r)
 		if state == access.StateUnavailable {
+			logRefusal(addr, route, refusalReason(access.ServiceUnavailable, false, true))
 			http.Error(w, "Replays access configuration is unreadable", http.StatusServiceUnavailable)
 			return
 		}
 		token, explicit, validSyntax := credentials(r)
-		addr, _ := clientOf(r)
-		if explicit && throttled(addr, r.URL.EscapedPath(), false) {
+		if explicit && throttled(addr, false) {
+			logRefusal(addr, route, "blocked for a minute after too many failed attempts")
 			sendThrottle(w)
 			return
 		}
@@ -168,15 +224,18 @@ func guardReplay(mode string, next http.Handler) http.Handler {
 				decision = access.Missing
 			}
 		}
+		reason := refusalReason(decision, explicit, validSyntax)
 		if decision == access.Allowed && mode == "ws" && !explicit && !sameOrigin(r, true) {
 			decision = access.Invalid
+			reason = fmt.Sprintf("session cookie sent from another site (Origin %q)", r.Header.Get("Origin"))
 		}
 		if decision != access.Allowed {
+			logRefusal(addr, route, reason)
 			if decision == access.ServiceUnavailable {
 				http.Error(w, "Replays access configuration is unreadable", http.StatusServiceUnavailable)
 				return
 			}
-			if explicit && throttled(addr, r.URL.EscapedPath(), true) {
+			if explicit && throttled(addr, true) {
 				sendThrottle(w)
 				return
 			}
@@ -285,7 +344,10 @@ func handleTokenSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, _ := replayAccess.ViewerState()
+	addr, _ := clientOf(r)
+	route := r.URL.EscapedPath()
 	if state == access.StateUnavailable {
+		logRefusal(addr, route, refusalReason(access.ServiceUnavailable, true, true))
 		http.Error(w, "Replays access configuration is unreadable", http.StatusServiceUnavailable)
 		return
 	}
@@ -293,8 +355,8 @@ func handleTokenSignIn(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, next, http.StatusSeeOther)
 		return
 	}
-	addr, _ := clientOf(r)
-	if throttled(addr, r.URL.EscapedPath(), false) {
+	if throttled(addr, false) {
+		logRefusal(addr, route, "blocked for a minute after too many failed attempts")
 		sendThrottle(w)
 		return
 	}
@@ -305,9 +367,10 @@ func handleTokenSignIn(w http.ResponseWriter, r *http.Request) {
 		viewer, decision = replayAccess.VerifyViewer(values[0])
 	}
 	if decision != access.Allowed {
+		logRefusal(addr, route, refusalReason(decision, true, len(values) == 1))
 		if decision == access.ServiceUnavailable {
 			http.Error(w, "Replays access configuration is unreadable", http.StatusServiceUnavailable)
-		} else if throttled(addr, r.URL.EscapedPath(), true) {
+		} else if throttled(addr, true) {
 			sendThrottle(w)
 		} else {
 			showTokenPage(w, r, true, next)

@@ -82,6 +82,62 @@ func TestAccessLogsDoNotContainTokens(t *testing.T) {
 	}
 }
 
+func TestRefusalsAreLoggedWithTheirReason(t *testing.T) {
+	service := access.Open(t.TempDir())
+	if _, _, err := service.AddViewer("RAI"); err != nil {
+		t.Fatal(err)
+	}
+	SetAccess(service)
+	failures.Lock()
+	failures.entries = make(map[string]failureEntry)
+	failures.logged = make(map[string]refusalEntry)
+	failures.Unlock()
+	oldWarning := logging.WarningLogger.Writer()
+	var logs bytes.Buffer
+	logging.WarningLogger.SetOutput(&logs)
+	t.Cleanup(func() {
+		SetAccess(nil)
+		logging.WarningLogger.SetOutput(oldWarning)
+	})
+	router := newRouter(ModuleAvailability{Replays: true})
+	request := func(target string, header ...string) int {
+		r := httptest.NewRequest(http.MethodGet, target, nil)
+		if len(header) == 2 {
+			r.Header.Set(header[0], header[1])
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	for i := 0; i < 5; i++ {
+		if code := request("/api/replay-state"); code != http.StatusUnauthorized {
+			t.Fatalf("no token: %d", code)
+		}
+	}
+	request("/api/replay-state?token=badsecret")
+	request("/api/replay-state", "Authorization", "Basic abc")
+	request("/api/replay-state", "Cookie", service.CookieName()+"=v1.x.1.forged")
+
+	text := logs.String()
+	for _, want := range []string{
+		"refused from 192.0.2.1 on /api/replay-state: no token",
+		"token not recognized",
+		"malformed credentials",
+		"session cookie not valid",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("log lacks %q:\n%s", want, text)
+		}
+	}
+	if count := strings.Count(text, ": no token"); count != 1 {
+		t.Errorf("repeated refusals logged %d times, want 1 within a minute", count)
+	}
+	if strings.Contains(text, "badsecret") || strings.Contains(text, "forged") {
+		t.Fatal("refusal log contains a credential")
+	}
+}
+
 func TestHandleReplayAndStateAcceptGeneratedToken(t *testing.T) {
 	videoDir := withReplayTestVideoDir(t)
 	filename := "2026-05-08_11h09m59s_LARRIVEE_Mariane_CLEANJERK_attempt1_Camera1.mp4"

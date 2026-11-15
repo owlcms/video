@@ -5,6 +5,11 @@
     tokens managed from **Replays > Access Tokens...**. Browser sign-in,
     token-bearing replay URLs and HTTPS reverse proxies are supported. With no
     tokens configured, Replays remains open as before.
+  - Every refused replay request is logged with the client address, the path
+    and the reason (no token, token not recognized, token expired, malformed
+    credentials, invalid session cookie, blocked after repeated failures). The
+    token is never logged. Repeats of the same refusal from the same address
+    are summarised once a minute.
   - `/replay/N` returns the latest finished clip for camera N, read from the
     replays folder as on the replays page, including after a restart. It no
     longer waits up to 45 seconds for a clip being recorded or trimmed, and no
